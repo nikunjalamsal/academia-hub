@@ -7,10 +7,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
-import { Users, Plus, Search, Loader2 } from 'lucide-react';
+import { Users, Plus, Search, Loader2, Edit } from 'lucide-react';
 import { Teacher, Semester } from '@/types/database';
 
 export default function Teachers() {
@@ -21,9 +20,12 @@ export default function Teachers() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
 
-  // Form state
+  // Form state for creating
   const [formData, setFormData] = useState({
     email: '',
     full_name: '',
@@ -34,6 +36,16 @@ export default function Teachers() {
     qualification: '',
   });
   const [selectedSemesters, setSelectedSemesters] = useState<{ semester_id: string; subject_name: string }[]>([]);
+
+  // Form state for editing
+  const [editFormData, setEditFormData] = useState({
+    full_name: '',
+    phone: '',
+    employee_id: '',
+    department: '',
+    designation: '',
+    qualification: '',
+  });
 
   useEffect(() => {
     fetchData();
@@ -104,6 +116,67 @@ export default function Teachers() {
     }
   };
 
+  const handleEditTeacher = (teacher: Teacher) => {
+    setEditingTeacher(teacher);
+    setEditFormData({
+      full_name: (teacher.profile as any)?.full_name || '',
+      phone: (teacher.profile as any)?.phone || '',
+      employee_id: teacher.employee_id,
+      department: teacher.department || '',
+      designation: teacher.designation || '',
+      qualification: teacher.qualification || '',
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleUpdateTeacher = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTeacher) return;
+    setIsUpdating(true);
+
+    try {
+      // Update profile
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          full_name: editFormData.full_name,
+          phone: editFormData.phone,
+        })
+        .eq('id', editingTeacher.profile_id);
+
+      if (profileError) throw profileError;
+
+      // Update teacher
+      const { error: teacherError } = await supabase
+        .from('teachers')
+        .update({
+          employee_id: editFormData.employee_id,
+          department: editFormData.department,
+          designation: editFormData.designation,
+          qualification: editFormData.qualification,
+        })
+        .eq('id', editingTeacher.id);
+
+      if (teacherError) throw teacherError;
+
+      toast({
+        title: 'Teacher Updated',
+        description: 'Teacher details have been updated successfully.',
+      });
+      setIsEditDialogOpen(false);
+      setEditingTeacher(null);
+      fetchData();
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const toggleSemester = (semesterId: string) => {
     const exists = selectedSemesters.find(s => s.semester_id === semesterId);
     if (exists) {
@@ -114,7 +187,7 @@ export default function Teachers() {
   };
 
   const updateSubjectName = (semesterId: string, subjectName: string) => {
-    setSelectedSemesters(selectedSemesters.map(s => 
+    setSelectedSemesters(selectedSemesters.map(s =>
       s.semester_id === semesterId ? { ...s, subject_name: subjectName } : s
     ));
   };
@@ -267,6 +340,86 @@ export default function Teachers() {
         )}
       </div>
 
+      {/* Edit Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Teacher</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateTeacher} className="space-y-4 mt-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit_full_name">Full Name *</Label>
+                <Input
+                  id="edit_full_name"
+                  value={editFormData.full_name}
+                  onChange={(e) => setEditFormData({ ...editFormData, full_name: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_phone">Phone</Label>
+                <Input
+                  id="edit_phone"
+                  value={editFormData.phone}
+                  onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_employee_id">Employee ID *</Label>
+                <Input
+                  id="edit_employee_id"
+                  value={editFormData.employee_id}
+                  onChange={(e) => setEditFormData({ ...editFormData, employee_id: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_department">Department</Label>
+                <Input
+                  id="edit_department"
+                  value={editFormData.department}
+                  onChange={(e) => setEditFormData({ ...editFormData, department: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_designation">Designation</Label>
+                <Input
+                  id="edit_designation"
+                  placeholder="e.g., Assistant Professor"
+                  value={editFormData.designation}
+                  onChange={(e) => setEditFormData({ ...editFormData, designation: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_qualification">Qualification</Label>
+                <Input
+                  id="edit_qualification"
+                  placeholder="e.g., M.Tech, PhD"
+                  value={editFormData.qualification}
+                  onChange={(e) => setEditFormData({ ...editFormData, qualification: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isUpdating}>
+                {isUpdating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  'Update Teacher'
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Search */}
       <Card className="mt-6">
         <CardContent className="p-4">
@@ -299,6 +452,7 @@ export default function Teachers() {
                   <TableHead>Department</TableHead>
                   <TableHead>Designation</TableHead>
                   <TableHead>Qualification</TableHead>
+                  {isAdmin && <TableHead className="w-16">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -310,6 +464,17 @@ export default function Teachers() {
                     <TableCell>{teacher.department || '-'}</TableCell>
                     <TableCell>{teacher.designation || '-'}</TableCell>
                     <TableCell>{teacher.qualification || '-'}</TableCell>
+                    {isAdmin && (
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleEditTeacher(teacher)}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
