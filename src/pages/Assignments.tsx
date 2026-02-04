@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { ClipboardList, Plus, Loader2, Calendar, FileText, Upload, Download } from 'lucide-react';
+import { ClipboardList, Plus, Loader2, Calendar, FileText, Upload, Download, Edit } from 'lucide-react';
 import { Assignment, Semester, Teacher, Student } from '@/types/database';
 import { format } from 'date-fns';
 
@@ -23,12 +23,24 @@ export default function Assignments() {
   const [submissions, setSubmissions] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    semester_id: '',
+    due_date: '',
+    max_marks: 100,
+  });
+
+  // Edit form state
+  const [editFormData, setEditFormData] = useState({
     title: '',
     description: '',
     semester_id: '',
@@ -43,79 +55,71 @@ export default function Assignments() {
   const fetchData = async () => {
     try {
       if (role === 'teacher' && user) {
-        // Get teacher record
         const { data: teacherData } = await supabase
           .from('teachers')
           .select('*')
           .eq('user_id', user.id)
           .maybeSingle();
-        
+
         if (teacherData) {
           setTeacher(teacherData as Teacher);
-          
-          // Get teacher's semester assignments
+
           const { data: assignmentsData } = await supabase
             .from('teacher_semester_assignments')
             .select('semester_id')
             .eq('teacher_id', teacherData.id);
-          
+
           const semesterIds = assignmentsData?.map(a => a.semester_id) || [];
-          
-          // Get assignments
+
           const { data } = await supabase
             .from('assignments')
             .select('*, semester:semesters(*)')
             .eq('teacher_id', teacherData.id)
             .order('due_date', { ascending: false });
-          
+
           if (data) setAssignments(data as Assignment[]);
 
-          // Get semesters for this teacher
           const { data: semData } = await supabase
             .from('semesters')
             .select('*')
             .in('id', semesterIds);
-          
+
           if (semData) setSemesters(semData as Semester[]);
         }
       } else if (role === 'student' && user) {
-        // Get student record
         const { data: studentData } = await supabase
           .from('students')
           .select('*')
           .eq('user_id', user.id)
           .maybeSingle();
-        
+
         if (studentData) {
           setStudent(studentData as Student);
-          
-          // Get assignments for student's semester
+
           const { data } = await supabase
             .from('assignments')
             .select('*, semester:semesters(*), teacher:teachers(*, profile:profiles(*))')
             .eq('semester_id', studentData.current_semester_id)
             .eq('is_active', true)
             .order('due_date', { ascending: true });
-          
+
           if (data) setAssignments(data as Assignment[]);
 
-          // Get submissions
           const { data: subData } = await supabase
             .from('assignment_submissions')
             .select('assignment_id')
             .eq('student_id', studentData.id);
-          
+
           const subMap: Record<string, boolean> = {};
           subData?.forEach(s => { subMap[s.assignment_id] = true; });
           setSubmissions(subMap);
         }
       } else if (role === 'admin') {
-        // Admin sees all
         const [assignmentsRes, semestersRes] = await Promise.all([
           supabase.from('assignments').select('*, semester:semesters(*), teacher:teachers(*, profile:profiles(*))').order('due_date', { ascending: false }),
           supabase.from('semesters').select('*').order('semester_number'),
         ]);
-        
+
         if (assignmentsRes.data) setAssignments(assignmentsRes.data as Assignment[]);
         if (semestersRes.data) setSemesters(semestersRes.data as Semester[]);
       }
@@ -128,27 +132,27 @@ export default function Assignments() {
 
   const handleFileUpload = async (file: File) => {
     if (!teacher) return null;
-    
+
     const fileExt = file.name.split('.').pop();
     const fileName = `assignments/${teacher.id}/${Date.now()}.${fileExt}`;
-    
-    const { data, error } = await supabase.storage
+
+    const { error } = await supabase.storage
       .from('academic-files')
       .upload(fileName, file);
-    
+
     if (error) throw error;
-    
+
     const { data: { publicUrl } } = supabase.storage
       .from('academic-files')
       .getPublicUrl(fileName);
-    
+
     return { url: publicUrl, name: file.name };
   };
 
   const handleCreateAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!teacher) return;
-    
+
     setIsCreating(true);
 
     try {
@@ -176,7 +180,7 @@ export default function Assignments() {
         title: 'Assignment Created',
         description: 'The assignment has been created successfully.',
       });
-      
+
       setIsDialogOpen(false);
       setFormData({ title: '', description: '', semester_id: '', due_date: '', max_marks: 100 });
       setSelectedFile(null);
@@ -192,37 +196,88 @@ export default function Assignments() {
     }
   };
 
+  const handleEditAssignment = (assignment: Assignment) => {
+    setEditingAssignment(assignment);
+    setEditFormData({
+      title: assignment.title,
+      description: assignment.description || '',
+      semester_id: assignment.semester_id,
+      due_date: format(new Date(assignment.due_date), "yyyy-MM-dd'T'HH:mm"),
+      max_marks: assignment.max_marks,
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleUpdateAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAssignment) return;
+
+    setIsUpdating(true);
+
+    try {
+      const { error } = await supabase
+        .from('assignments')
+        .update({
+          title: editFormData.title,
+          description: editFormData.description,
+          semester_id: editFormData.semester_id,
+          due_date: editFormData.due_date,
+          max_marks: editFormData.max_marks,
+        })
+        .eq('id', editingAssignment.id);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Assignment Updated',
+        description: 'The assignment has been updated successfully.',
+      });
+
+      setIsEditDialogOpen(false);
+      setEditingAssignment(null);
+      fetchData();
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleSubmitAssignment = async (assignmentId: string, file: File) => {
     if (!student) return;
-    
+
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `submissions/${student.id}/${assignmentId}/${Date.now()}.${fileExt}`;
-      
+
       const { error: uploadError } = await supabase.storage
         .from('academic-files')
         .upload(fileName, file);
-      
+
       if (uploadError) throw uploadError;
-      
+
       const { data: { publicUrl } } = supabase.storage
         .from('academic-files')
         .getPublicUrl(fileName);
-      
+
       const { error } = await supabase.from('assignment_submissions').insert({
         assignment_id: assignmentId,
         student_id: student.id,
         file_url: publicUrl,
         file_name: file.name,
       });
-      
+
       if (error) throw error;
-      
+
       toast({
         title: 'Assignment Submitted',
         description: 'Your assignment has been submitted successfully.',
       });
-      
+
       setSubmissions({ ...submissions, [assignmentId]: true });
     } catch (error: any) {
       toast({
@@ -235,6 +290,8 @@ export default function Assignments() {
 
   const isTeacher = role === 'teacher';
   const isStudent = role === 'student';
+  const isAdmin = role === 'admin';
+  const canEdit = isTeacher || isAdmin;
 
   return (
     <div className="page-container">
@@ -347,6 +404,89 @@ export default function Assignments() {
         )}
       </div>
 
+      {/* Edit Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Assignment</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateAssignment} className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit_title">Title *</Label>
+              <Input
+                id="edit_title"
+                value={editFormData.title}
+                onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit_semester_id">Semester *</Label>
+              <Select
+                value={editFormData.semester_id}
+                onValueChange={(value) => setEditFormData({ ...editFormData, semester_id: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select semester" />
+                </SelectTrigger>
+                <SelectContent>
+                  {semesters.map((semester) => (
+                    <SelectItem key={semester.id} value={semester.id}>
+                      {semester.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit_description">Description</Label>
+              <Textarea
+                id="edit_description"
+                value={editFormData.description}
+                onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                rows={3}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit_due_date">Due Date *</Label>
+                <Input
+                  id="edit_due_date"
+                  type="datetime-local"
+                  value={editFormData.due_date}
+                  onChange={(e) => setEditFormData({ ...editFormData, due_date: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_max_marks">Max Marks</Label>
+                <Input
+                  id="edit_max_marks"
+                  type="number"
+                  value={editFormData.max_marks}
+                  onChange={(e) => setEditFormData({ ...editFormData, max_marks: parseInt(e.target.value) })}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isUpdating}>
+                {isUpdating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  'Update'
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Assignments Grid */}
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -357,7 +497,7 @@ export default function Assignments() {
           {assignments.map((assignment, index) => {
             const isPastDue = new Date(assignment.due_date) < new Date();
             const isSubmitted = submissions[assignment.id];
-            
+
             return (
               <Card key={assignment.id} className="card-interactive animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
                 <CardContent className="p-6">
@@ -365,13 +505,25 @@ export default function Assignments() {
                     <div className="p-2 rounded-lg bg-warning/10">
                       <ClipboardList className="w-5 h-5 text-warning" />
                     </div>
-                    <span className={`text-xs px-2 py-1 rounded font-medium ${
-                      isSubmitted ? 'bg-success/10 text-success' :
-                      isPastDue ? 'bg-destructive/10 text-destructive' :
-                      'bg-warning/10 text-warning'
-                    }`}>
-                      {isSubmitted ? 'Submitted' : isPastDue ? 'Past Due' : 'Pending'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {canEdit && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleEditAssignment(assignment)}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                      )}
+                      <span className={`text-xs px-2 py-1 rounded font-medium ${
+                        isSubmitted ? 'bg-success/10 text-success' :
+                        isPastDue ? 'bg-destructive/10 text-destructive' :
+                        'bg-warning/10 text-warning'
+                      }`}>
+                        {isSubmitted ? 'Submitted' : isPastDue ? 'Past Due' : 'Pending'}
+                      </span>
+                    </div>
                   </div>
                   <h3 className="font-semibold text-lg mb-2">{assignment.title}</h3>
                   <p className="text-sm text-muted-foreground line-clamp-2 mb-4">

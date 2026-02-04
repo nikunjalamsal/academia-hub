@@ -3,17 +3,17 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { GraduationCap, Plus, Search, Loader2 } from 'lucide-react';
+import { GraduationCap, Plus, Search, Loader2, Edit } from 'lucide-react';
 import { Student, Semester, Course } from '@/types/database';
 
 export default function Students() {
-  const { role, session } = useAuth();
+  const { role } = useAuth();
   const { toast } = useToast();
   const [students, setStudents] = useState<Student[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
@@ -21,12 +21,28 @@ export default function Students() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
   const [selectedSemester, setSelectedSemester] = useState<string>('all');
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
 
-  // Form state
+  // Form state for creating
   const [formData, setFormData] = useState({
     email: '',
+    full_name: '',
+    phone: '',
+    roll_number: '',
+    course_id: '',
+    current_semester_id: '',
+    enrollment_year: new Date().getFullYear(),
+    guardian_name: '',
+    guardian_phone: '',
+    address: '',
+  });
+
+  // Form state for editing
+  const [editFormData, setEditFormData] = useState({
     full_name: '',
     phone: '',
     roll_number: '',
@@ -112,14 +128,81 @@ export default function Students() {
     }
   };
 
+  const handleEditStudent = (student: Student) => {
+    setEditingStudent(student);
+    setEditFormData({
+      full_name: (student.profile as any)?.full_name || '',
+      phone: (student.profile as any)?.phone || '',
+      roll_number: student.roll_number,
+      course_id: student.course_id,
+      current_semester_id: student.current_semester_id || '',
+      enrollment_year: student.enrollment_year,
+      guardian_name: student.guardian_name || '',
+      guardian_phone: student.guardian_phone || '',
+      address: student.address || '',
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleUpdateStudent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudent) return;
+    setIsUpdating(true);
+
+    try {
+      // Update profile
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          full_name: editFormData.full_name,
+          phone: editFormData.phone,
+        })
+        .eq('id', editingStudent.profile_id);
+
+      if (profileError) throw profileError;
+
+      // Update student
+      const { error: studentError } = await supabase
+        .from('students')
+        .update({
+          roll_number: editFormData.roll_number,
+          course_id: editFormData.course_id,
+          current_semester_id: editFormData.current_semester_id,
+          enrollment_year: editFormData.enrollment_year,
+          guardian_name: editFormData.guardian_name,
+          guardian_phone: editFormData.guardian_phone,
+          address: editFormData.address,
+        })
+        .eq('id', editingStudent.id);
+
+      if (studentError) throw studentError;
+
+      toast({
+        title: 'Student Updated',
+        description: 'Student details have been updated successfully.',
+      });
+      setIsEditDialogOpen(false);
+      setEditingStudent(null);
+      fetchData();
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const filteredStudents = students.filter(student => {
-    const matchesSearch = 
+    const matchesSearch =
       (student.profile as any)?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       student.roll_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (student.profile as any)?.email?.toLowerCase().includes(searchQuery.toLowerCase());
-    
+
     const matchesSemester = selectedSemester === 'all' || student.current_semester_id === selectedSemester;
-    
+
     return matchesSearch && matchesSemester;
   });
 
@@ -285,6 +368,132 @@ export default function Students() {
         )}
       </div>
 
+      {/* Edit Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Student</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateStudent} className="space-y-4 mt-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit_full_name">Full Name *</Label>
+                <Input
+                  id="edit_full_name"
+                  value={editFormData.full_name}
+                  onChange={(e) => setEditFormData({ ...editFormData, full_name: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_phone">Phone</Label>
+                <Input
+                  id="edit_phone"
+                  value={editFormData.phone}
+                  onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_roll_number">Roll Number *</Label>
+                <Input
+                  id="edit_roll_number"
+                  value={editFormData.roll_number}
+                  onChange={(e) => setEditFormData({ ...editFormData, roll_number: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_course_id">Course *</Label>
+                <Select
+                  value={editFormData.course_id}
+                  onValueChange={(value) => setEditFormData({ ...editFormData, course_id: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select course" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {courses.map((course) => (
+                      <SelectItem key={course.id} value={course.id}>
+                        {course.name} ({course.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_current_semester_id">Current Semester *</Label>
+                <Select
+                  value={editFormData.current_semester_id}
+                  onValueChange={(value) => setEditFormData({ ...editFormData, current_semester_id: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select semester" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {semesters
+                      .filter(s => !editFormData.course_id || s.course_id === editFormData.course_id)
+                      .map((semester) => (
+                        <SelectItem key={semester.id} value={semester.id}>
+                          {semester.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_enrollment_year">Enrollment Year *</Label>
+                <Input
+                  id="edit_enrollment_year"
+                  type="number"
+                  value={editFormData.enrollment_year}
+                  onChange={(e) => setEditFormData({ ...editFormData, enrollment_year: parseInt(e.target.value) })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_guardian_name">Guardian Name</Label>
+                <Input
+                  id="edit_guardian_name"
+                  value={editFormData.guardian_name}
+                  onChange={(e) => setEditFormData({ ...editFormData, guardian_name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit_guardian_phone">Guardian Phone</Label>
+                <Input
+                  id="edit_guardian_phone"
+                  value={editFormData.guardian_phone}
+                  onChange={(e) => setEditFormData({ ...editFormData, guardian_phone: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2 col-span-2">
+                <Label htmlFor="edit_address">Address</Label>
+                <Input
+                  id="edit_address"
+                  value={editFormData.address}
+                  onChange={(e) => setEditFormData({ ...editFormData, address: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isUpdating}>
+                {isUpdating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  'Update Student'
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Filters */}
       <Card className="mt-6">
         <CardContent className="p-4">
@@ -332,6 +541,7 @@ export default function Students() {
                   <TableHead>Course</TableHead>
                   <TableHead>Semester</TableHead>
                   <TableHead>Enrollment Year</TableHead>
+                  {isAdmin && <TableHead className="w-16">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -343,6 +553,17 @@ export default function Students() {
                     <TableCell>{(student.course as any)?.code}</TableCell>
                     <TableCell>{(student.current_semester as any)?.name}</TableCell>
                     <TableCell>{student.enrollment_year}</TableCell>
+                    {isAdmin && (
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleEditStudent(student)}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
