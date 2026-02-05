@@ -495,6 +495,7 @@ export type Database = {
           id: string
           is_active: boolean | null
           semester_id: string
+          subject_id: string | null
           subject_name: string
           teacher_id: string
         }
@@ -503,6 +504,7 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           semester_id: string
+          subject_id?: string | null
           subject_name: string
           teacher_id: string
         }
@@ -511,6 +513,7 @@ export type Database = {
           id?: string
           is_active?: boolean | null
           semester_id?: string
+          subject_id?: string | null
           subject_name?: string
           teacher_id?: string
         }
@@ -520,6 +523,13 @@ export type Database = {
             columns: ["semester_id"]
             isOneToOne: false
             referencedRelation: "semesters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "teacher_semester_assignments_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
           {

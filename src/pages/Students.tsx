@@ -8,8 +8,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
-import { GraduationCap, Plus, Search, Loader2, Edit } from 'lucide-react';
+import { GraduationCap, Plus, Search, Loader2, Edit, Users } from 'lucide-react';
 import { Student, Semester, Course } from '@/types/database';
 
 export default function Students() {
@@ -22,10 +23,17 @@ export default function Students() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isBatchDialogOpen, setIsBatchDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isBatchUpdating, setIsBatchUpdating] = useState(false);
   const [selectedSemester, setSelectedSemester] = useState<string>('all');
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
+
+  // Batch assignment state
+  const [batchCourseId, setBatchCourseId] = useState('');
+  const [batchSemesterId, setBatchSemesterId] = useState('');
 
   // Form state for creating
   const [formData, setFormData] = useState({
@@ -195,6 +203,77 @@ export default function Students() {
     }
   };
 
+  const handleBatchAssignment = async () => {
+    if (selectedStudents.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'No Students Selected',
+        description: 'Please select at least one student.',
+      });
+      return;
+    }
+
+    if (!batchSemesterId) {
+      toast({
+        variant: 'destructive',
+        title: 'No Semester Selected',
+        description: 'Please select a semester to assign.',
+      });
+      return;
+    }
+
+    setIsBatchUpdating(true);
+    try {
+      // Get the course_id from the selected semester
+      const selectedSem = semesters.find(s => s.id === batchSemesterId);
+      const courseId = selectedSem?.course_id || batchCourseId;
+
+      const { error } = await supabase
+        .from('students')
+        .update({
+          current_semester_id: batchSemesterId,
+          course_id: courseId,
+        })
+        .in('id', selectedStudents);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Students Updated',
+        description: `${selectedStudents.length} student(s) have been assigned to the selected semester.`,
+      });
+      setIsBatchDialogOpen(false);
+      setSelectedStudents([]);
+      setBatchCourseId('');
+      setBatchSemesterId('');
+      fetchData();
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    } finally {
+      setIsBatchUpdating(false);
+    }
+  };
+
+  const toggleStudentSelection = (studentId: string) => {
+    setSelectedStudents(prev =>
+      prev.includes(studentId)
+        ? prev.filter(id => id !== studentId)
+        : [...prev, studentId]
+    );
+  };
+
+  const toggleAllStudents = () => {
+    if (selectedStudents.length === filteredStudents.length) {
+      setSelectedStudents([]);
+    } else {
+      setSelectedStudents(filteredStudents.map(s => s.id));
+    }
+  };
+
   const filteredStudents = students.filter(student => {
     const matchesSearch =
       (student.profile as any)?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -205,6 +284,10 @@ export default function Students() {
 
     return matchesSearch && matchesSemester;
   });
+
+  const batchFilteredSemesters = batchCourseId
+    ? semesters.filter(s => s.course_id === batchCourseId)
+    : semesters;
 
   const isAdmin = role === 'admin';
 
@@ -221,13 +304,83 @@ export default function Students() {
           </p>
         </div>
         {isAdmin && (
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="w-4 h-4" />
-                Add Student
-              </Button>
-            </DialogTrigger>
+          <div className="flex gap-3">
+            {/* Batch Assignment Dialog */}
+            <Dialog open={isBatchDialogOpen} onOpenChange={setIsBatchDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2" disabled={selectedStudents.length === 0}>
+                  <Users className="w-4 h-4" />
+                  Batch Assign ({selectedStudents.length})
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Batch Assign Students to Semester</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 mt-4">
+                  <p className="text-sm text-muted-foreground">
+                    Assign {selectedStudents.length} selected student(s) to a course and semester.
+                  </p>
+                  <div className="space-y-2">
+                    <Label>Select Course</Label>
+                    <Select value={batchCourseId} onValueChange={(value) => {
+                      setBatchCourseId(value);
+                      setBatchSemesterId('');
+                    }}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select course" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {courses.map((course) => (
+                          <SelectItem key={course.id} value={course.id}>
+                            {course.name} ({course.code})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Select Semester</Label>
+                    <Select value={batchSemesterId} onValueChange={setBatchSemesterId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select semester" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {batchFilteredSemesters.map((semester) => (
+                          <SelectItem key={semester.id} value={semester.id}>
+                            {semester.name} {semester.course && `(${(semester.course as any).code})`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end gap-3 pt-4">
+                    <Button variant="outline" onClick={() => setIsBatchDialogOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button onClick={handleBatchAssignment} disabled={isBatchUpdating || !batchSemesterId}>
+                      {isBatchUpdating ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Assigning...
+                        </>
+                      ) : (
+                        'Assign Students'
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* Add Student Dialog */}
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  Add Student
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Add New Student</DialogTitle>
@@ -365,6 +518,7 @@ export default function Students() {
               </form>
             </DialogContent>
           </Dialog>
+          </div>
         )}
       </div>
 
@@ -535,6 +689,14 @@ export default function Students() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {isAdmin && (
+                    <TableHead className="w-12">
+                      <Checkbox
+                        checked={selectedStudents.length === filteredStudents.length && filteredStudents.length > 0}
+                        onCheckedChange={toggleAllStudents}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>Roll No.</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
@@ -547,6 +709,14 @@ export default function Students() {
               <TableBody>
                 {filteredStudents.map((student) => (
                   <TableRow key={student.id} className="table-row-hover">
+                    {isAdmin && (
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedStudents.includes(student.id)}
+                          onCheckedChange={() => toggleStudentSelection(student.id)}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="font-medium">{student.roll_number}</TableCell>
                     <TableCell>{(student.profile as any)?.full_name}</TableCell>
                     <TableCell className="text-muted-foreground">{(student.profile as any)?.email}</TableCell>

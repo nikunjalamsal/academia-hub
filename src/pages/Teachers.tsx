@@ -8,15 +8,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Users, Plus, Search, Loader2, Edit } from 'lucide-react';
-import { Teacher, Semester } from '@/types/database';
+import { Teacher, Semester, Course, Subject } from '@/types/database';
 
 export default function Teachers() {
   const { role } = useAuth();
   const { toast } = useToast();
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -24,6 +27,7 @@ export default function Teachers() {
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState<string>('');
 
   // Form state for creating
   const [formData, setFormData] = useState({
@@ -35,7 +39,7 @@ export default function Teachers() {
     designation: '',
     qualification: '',
   });
-  const [selectedSemesters, setSelectedSemesters] = useState<{ semester_id: string; subject_name: string }[]>([]);
+  const [selectedSemesters, setSelectedSemesters] = useState<{ semester_id: string; subject_name: string; subject_id?: string }[]>([]);
 
   // Form state for editing
   const [editFormData, setEditFormData] = useState({
@@ -53,16 +57,20 @@ export default function Teachers() {
 
   const fetchData = async () => {
     try {
-      const [teachersRes, semestersRes] = await Promise.all([
+      const [teachersRes, semestersRes, coursesRes, subjectsRes] = await Promise.all([
         supabase.from('teachers').select(`
           *,
           profile:profiles(*)
         `).eq('is_active', true).order('created_at', { ascending: false }),
         supabase.from('semesters').select('*, course:courses(*)').order('semester_number'),
+        supabase.from('courses').select('*').eq('is_active', true),
+        supabase.from('subjects').select('*').eq('is_active', true).order('name'),
       ]);
 
       if (teachersRes.data) setTeachers(teachersRes.data as Teacher[]);
       if (semestersRes.data) setSemesters(semestersRes.data as Semester[]);
+      if (coursesRes.data) setCourses(coursesRes.data as Course[]);
+      if (subjectsRes.data) setSubjects(subjectsRes.data as Subject[]);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -79,7 +87,7 @@ export default function Teachers() {
         body: {
           ...formData,
           role: 'teacher',
-          semester_assignments: selectedSemesters.filter(s => s.subject_name),
+          semester_assignments: selectedSemesters.filter(s => s.subject_name || s.subject_id),
         },
       });
 
@@ -101,6 +109,7 @@ export default function Teachers() {
           qualification: '',
         });
         setSelectedSemesters([]);
+        setSelectedCourse('');
         fetchData();
       } else {
         throw new Error(response.data?.error || 'Failed to create teacher');
@@ -182,14 +191,22 @@ export default function Teachers() {
     if (exists) {
       setSelectedSemesters(selectedSemesters.filter(s => s.semester_id !== semesterId));
     } else {
-      setSelectedSemesters([...selectedSemesters, { semester_id: semesterId, subject_name: '' }]);
+      setSelectedSemesters([...selectedSemesters, { semester_id: semesterId, subject_name: '', subject_id: '' }]);
     }
   };
 
-  const updateSubjectName = (semesterId: string, subjectName: string) => {
+  const updateSubjectSelection = (semesterId: string, subjectId: string, subjectName: string) => {
     setSelectedSemesters(selectedSemesters.map(s =>
-      s.semester_id === semesterId ? { ...s, subject_name: subjectName } : s
+      s.semester_id === semesterId ? { ...s, subject_id: subjectId, subject_name: subjectName } : s
     ));
+  };
+
+  const filteredSemesters = selectedCourse
+    ? semesters.filter(s => s.course_id === selectedCourse)
+    : semesters;
+
+  const getSubjectsForSemester = (semesterId: string) => {
+    return subjects.filter(s => s.semester_id === semesterId);
   };
 
   const filteredTeachers = teachers.filter(teacher =>
@@ -288,31 +305,87 @@ export default function Teachers() {
                   </div>
                 </div>
 
-                {/* Semester Assignments */}
+                {/* Course and Semester Assignments */}
                 <div className="space-y-3">
-                  <Label>Assign to Semesters</Label>
-                  <div className="border rounded-lg p-4 max-h-48 overflow-y-auto space-y-3">
-                    {semesters.map((semester) => {
-                      const isSelected = selectedSemesters.find(s => s.semester_id === semester.id);
-                      return (
-                        <div key={semester.id} className="flex items-center gap-4">
-                          <Checkbox
-                            checked={!!isSelected}
-                            onCheckedChange={() => toggleSemester(semester.id)}
-                          />
-                          <span className="text-sm font-medium w-24">{semester.name}</span>
-                          {isSelected && (
-                            <Input
-                              placeholder="Subject name"
-                              value={isSelected.subject_name}
-                              onChange={(e) => updateSubjectName(semester.id, e.target.value)}
-                              className="flex-1"
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
+                  <Label>Assign to Course & Semesters</Label>
+                  
+                  {/* Course Selection */}
+                  <div className="space-y-2">
+                    <Label htmlFor="course_select" className="text-sm text-muted-foreground">Select Course First</Label>
+                    <Select value={selectedCourse} onValueChange={(value) => {
+                      setSelectedCourse(value);
+                      setSelectedSemesters([]); // Reset semester selections when course changes
+                    }}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a course" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {courses.map((course) => (
+                          <SelectItem key={course.id} value={course.id}>
+                            {course.name} ({course.code})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
+
+                  {/* Semester and Subject Selection */}
+                  {selectedCourse && (
+                    <div className="border rounded-lg p-4 max-h-64 overflow-y-auto space-y-3">
+                      <p className="text-sm text-muted-foreground mb-2">Select semesters and subjects to assign:</p>
+                      {filteredSemesters.map((semester) => {
+                        const isSelected = selectedSemesters.find(s => s.semester_id === semester.id);
+                        const semesterSubjects = getSubjectsForSemester(semester.id);
+                        return (
+                          <div key={semester.id} className="space-y-2 p-3 bg-muted/50 rounded-lg">
+                            <div className="flex items-center gap-3">
+                              <Checkbox
+                                checked={!!isSelected}
+                                onCheckedChange={() => toggleSemester(semester.id)}
+                              />
+                              <span className="text-sm font-medium">{semester.name}</span>
+                            </div>
+                            {isSelected && (
+                              <div className="ml-7">
+                                {semesterSubjects.length > 0 ? (
+                                  <Select
+                                    value={isSelected.subject_id || ''}
+                                    onValueChange={(value) => {
+                                      const subject = semesterSubjects.find(s => s.id === value);
+                                      updateSubjectSelection(semester.id, value, subject?.name || '');
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-full">
+                                      <SelectValue placeholder="Select subject" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {semesterSubjects.map((subject) => (
+                                        <SelectItem key={subject.id} value={subject.id}>
+                                          {subject.name} ({subject.code})
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                ) : (
+                                  <Input
+                                    placeholder="Enter subject name (no subjects defined)"
+                                    value={isSelected.subject_name}
+                                    onChange={(e) => updateSubjectSelection(semester.id, '', e.target.value)}
+                                    className="text-sm"
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {filteredSemesters.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          No semesters found for this course.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-muted p-3 rounded-lg text-sm">
@@ -458,9 +531,13 @@ export default function Teachers() {
               <TableBody>
                 {filteredTeachers.map((teacher) => (
                   <TableRow key={teacher.id} className="table-row-hover">
-                    <TableCell className="font-medium">{teacher.employee_id}</TableCell>
-                    <TableCell>{(teacher.profile as any)?.full_name}</TableCell>
-                    <TableCell className="text-muted-foreground">{(teacher.profile as any)?.email}</TableCell>
+                    <TableCell className="font-mono text-sm">{teacher.employee_id}</TableCell>
+                    <TableCell className="font-medium">
+                      {(teacher.profile as any)?.full_name}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {(teacher.profile as any)?.email}
+                    </TableCell>
                     <TableCell>{teacher.department || '-'}</TableCell>
                     <TableCell>{teacher.designation || '-'}</TableCell>
                     <TableCell>{teacher.qualification || '-'}</TableCell>
@@ -480,8 +557,8 @@ export default function Teachers() {
               </TableBody>
             </Table>
           ) : (
-            <div className="text-center py-12">
-              <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <div className="flex flex-col items-center justify-center py-12">
+              <Users className="w-12 h-12 text-muted-foreground/50 mb-4" />
               <p className="text-muted-foreground">No teachers found</p>
             </div>
           )}
