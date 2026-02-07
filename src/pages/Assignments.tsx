@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { ClipboardList, Plus, Loader2, Calendar, FileText, Upload, Download, Edit } from 'lucide-react';
+import { ClipboardList, Plus, Loader2, Calendar, FileText, Upload, Download, Edit, Trash2 } from 'lucide-react';
 import { Assignment, Semester, Teacher, Student } from '@/types/database';
 import { format } from 'date-fns';
 
@@ -30,7 +30,6 @@ export default function Assignments() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
 
-  // Form state
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -39,7 +38,6 @@ export default function Assignments() {
     max_marks: 100,
   });
 
-  // Edit form state
   const [editFormData, setEditFormData] = useState({
     title: '',
     description: '',
@@ -75,6 +73,7 @@ export default function Assignments() {
             .from('assignments')
             .select('*, semester:semesters(*)')
             .eq('teacher_id', teacherData.id)
+            .eq('is_active', true)
             .order('due_date', { ascending: false });
 
           if (data) setAssignments(data as Assignment[]);
@@ -116,7 +115,7 @@ export default function Assignments() {
         }
       } else if (role === 'admin') {
         const [assignmentsRes, semestersRes] = await Promise.all([
-          supabase.from('assignments').select('*, semester:semesters(*), teacher:teachers(*, profile:profiles(*))').order('due_date', { ascending: false }),
+          supabase.from('assignments').select('*, semester:semesters(*), teacher:teachers(*, profile:profiles(*))').eq('is_active', true).order('due_date', { ascending: false }),
           supabase.from('semesters').select('*').order('semester_number'),
         ]);
 
@@ -247,6 +246,29 @@ export default function Assignments() {
     }
   };
 
+  const handleDeleteAssignment = async (assignmentId: string) => {
+    try {
+      const { error } = await supabase
+        .from('assignments')
+        .update({ is_active: false })
+        .eq('id', assignmentId);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Assignment Removed',
+        description: 'The assignment has been deactivated.',
+      });
+      fetchData();
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
+      });
+    }
+  };
+
   const handleSubmitAssignment = async (assignmentId: string, file: File) => {
     if (!student) return;
 
@@ -320,82 +342,41 @@ export default function Assignments() {
               <form onSubmit={handleCreateAssignment} className="space-y-4 mt-4">
                 <div className="space-y-2">
                   <Label htmlFor="title">Title *</Label>
-                  <Input
-                    id="title"
-                    value={formData.title}
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    required
-                  />
+                  <Input id="title" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} required />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="semester_id">Semester *</Label>
-                  <Select
-                    value={formData.semester_id}
-                    onValueChange={(value) => setFormData({ ...formData, semester_id: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select semester" />
-                    </SelectTrigger>
+                  <Select value={formData.semester_id} onValueChange={(value) => setFormData({ ...formData, semester_id: value })}>
+                    <SelectTrigger><SelectValue placeholder="Select semester" /></SelectTrigger>
                     <SelectContent>
                       {semesters.map((semester) => (
-                        <SelectItem key={semester.id} value={semester.id}>
-                          {semester.name}
-                        </SelectItem>
+                        <SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="description">Description</Label>
-                  <Textarea
-                    id="description"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    rows={3}
-                  />
+                  <Textarea id="description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={3} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="due_date">Due Date *</Label>
-                    <Input
-                      id="due_date"
-                      type="datetime-local"
-                      value={formData.due_date}
-                      onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                      required
-                    />
+                    <Input id="due_date" type="datetime-local" value={formData.due_date} onChange={(e) => setFormData({ ...formData, due_date: e.target.value })} required />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="max_marks">Max Marks</Label>
-                    <Input
-                      id="max_marks"
-                      type="number"
-                      value={formData.max_marks}
-                      onChange={(e) => setFormData({ ...formData, max_marks: parseInt(e.target.value) })}
-                    />
+                    <Input id="max_marks" type="number" value={formData.max_marks} onChange={(e) => setFormData({ ...formData, max_marks: parseInt(e.target.value) })} />
                   </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="file">Attachment (Optional)</Label>
-                  <Input
-                    id="file"
-                    type="file"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                  />
+                  <Input id="file" type="file" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} />
                 </div>
                 <div className="flex justify-end gap-3">
-                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
-                    Cancel
-                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
                   <Button type="submit" disabled={isCreating}>
-                    {isCreating ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        {uploadingFile ? 'Uploading...' : 'Creating...'}
-                      </>
-                    ) : (
-                      'Create'
-                    )}
+                    {isCreating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{uploadingFile ? 'Uploading...' : 'Creating...'}</> : 'Create'}
                   </Button>
                 </div>
               </form>
@@ -413,74 +394,37 @@ export default function Assignments() {
           <form onSubmit={handleUpdateAssignment} className="space-y-4 mt-4">
             <div className="space-y-2">
               <Label htmlFor="edit_title">Title *</Label>
-              <Input
-                id="edit_title"
-                value={editFormData.title}
-                onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
-                required
-              />
+              <Input id="edit_title" value={editFormData.title} onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })} required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit_semester_id">Semester *</Label>
-              <Select
-                value={editFormData.semester_id}
-                onValueChange={(value) => setEditFormData({ ...editFormData, semester_id: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select semester" />
-                </SelectTrigger>
+              <Select value={editFormData.semester_id} onValueChange={(value) => setEditFormData({ ...editFormData, semester_id: value })}>
+                <SelectTrigger><SelectValue placeholder="Select semester" /></SelectTrigger>
                 <SelectContent>
                   {semesters.map((semester) => (
-                    <SelectItem key={semester.id} value={semester.id}>
-                      {semester.name}
-                    </SelectItem>
+                    <SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit_description">Description</Label>
-              <Textarea
-                id="edit_description"
-                value={editFormData.description}
-                onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
-                rows={3}
-              />
+              <Textarea id="edit_description" value={editFormData.description} onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })} rows={3} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit_due_date">Due Date *</Label>
-                <Input
-                  id="edit_due_date"
-                  type="datetime-local"
-                  value={editFormData.due_date}
-                  onChange={(e) => setEditFormData({ ...editFormData, due_date: e.target.value })}
-                  required
-                />
+                <Input id="edit_due_date" type="datetime-local" value={editFormData.due_date} onChange={(e) => setEditFormData({ ...editFormData, due_date: e.target.value })} required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="edit_max_marks">Max Marks</Label>
-                <Input
-                  id="edit_max_marks"
-                  type="number"
-                  value={editFormData.max_marks}
-                  onChange={(e) => setEditFormData({ ...editFormData, max_marks: parseInt(e.target.value) })}
-                />
+                <Input id="edit_max_marks" type="number" value={editFormData.max_marks} onChange={(e) => setEditFormData({ ...editFormData, max_marks: parseInt(e.target.value) })} />
               </div>
             </div>
             <div className="flex justify-end gap-3">
-              <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-                Cancel
-              </Button>
+              <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={isUpdating}>
-                {isUpdating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Updating...
-                  </>
-                ) : (
-                  'Update'
-                )}
+                {isUpdating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</> : 'Update'}
               </Button>
             </div>
           </form>
@@ -505,16 +449,16 @@ export default function Assignments() {
                     <div className="p-2 rounded-lg bg-warning/10">
                       <ClipboardList className="w-5 h-5 text-warning" />
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
                       {canEdit && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handleEditAssignment(assignment)}
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
+                        <>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditAssignment(assignment)}>
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDeleteAssignment(assignment.id)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
                       )}
                       <span className={`text-xs px-2 py-1 rounded font-medium ${
                         isSubmitted ? 'bg-success/10 text-success' :
@@ -540,12 +484,7 @@ export default function Assignments() {
                     </div>
                   </div>
                   {assignment.file_url && (
-                    <a
-                      href={assignment.file_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 mt-4 text-sm text-accent hover:underline"
-                    >
+                    <a href={assignment.file_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-4 text-sm text-accent hover:underline">
                       <Download className="w-4 h-4" />
                       {assignment.file_name || 'Download attachment'}
                     </a>

@@ -25,6 +25,7 @@ export default function AttendancePage() {
   const [attendanceMap, setAttendanceMap] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [teacherAssignments, setTeacherAssignments] = useState<{ semester_id: string; subject_id: string | null; subject_name: string }[]>([]);
 
   useEffect(() => {
     fetchData();
@@ -33,63 +34,64 @@ export default function AttendancePage() {
   const fetchData = async () => {
     try {
       if (role === 'teacher' && user) {
-        // Get teacher record
         const { data: teacherData } = await supabase
           .from('teachers')
           .select('*')
           .eq('user_id', user.id)
           .maybeSingle();
-        
+
         if (teacherData) {
           setTeacher(teacherData as Teacher);
-          
-          // Get teacher's semester assignments
+
+          // Get teacher's assignments with subject info
           const { data: assignmentsData } = await supabase
             .from('teacher_semester_assignments')
-            .select('semester_id, subject_name')
+            .select('semester_id, subject_id, subject_name')
             .eq('teacher_id', teacherData.id)
             .eq('is_active', true);
-          
-          const semesterIds = [...new Set(assignmentsData?.map(a => a.semester_id) || [])];
-          
+
+          const assignments = assignmentsData || [];
+          setTeacherAssignments(assignments);
+
+          const semesterIds = [...new Set(assignments.map(a => a.semester_id))];
+
           // Get semesters
-          const { data: semData } = await supabase
-            .from('semesters')
-            .select('*')
-            .in('id', semesterIds);
-          
-          if (semData) {
-            setSemesters(semData as Semester[]);
-            if (semData.length > 0) setSelectedSemester(semData[0].id);
+          if (semesterIds.length > 0) {
+            const { data: semData } = await supabase
+              .from('semesters')
+              .select('*')
+              .in('id', semesterIds);
+
+            if (semData) {
+              setSemesters(semData as Semester[]);
+              if (semData.length > 0) setSelectedSemester(semData[0].id);
+            }
           }
         }
       } else if (role === 'student' && user) {
-        // Get student record
         const { data: studentData } = await supabase
           .from('students')
           .select('*, course:courses(*), current_semester:semesters(*)')
           .eq('user_id', user.id)
           .maybeSingle();
-        
+
         if (studentData) {
           setStudent(studentData as Student);
-          
-          // Get student's attendance
+
           const { data } = await supabase
             .from('attendance')
             .select('*, subject:subjects(*)')
             .eq('student_id', studentData.id)
             .order('date', { ascending: false });
-          
+
           if (data) setAttendance(data as Attendance[]);
         }
       } else if (role === 'admin') {
-        // Get all semesters
         const { data: semData } = await supabase
           .from('semesters')
           .select('*')
           .order('semester_number');
-        
+
         if (semData) {
           setSemesters(semData as Semester[]);
           if (semData.length > 0) setSelectedSemester(semData[0].id);
@@ -123,19 +125,42 @@ export default function AttendancePage() {
         .eq('current_semester_id', selectedSemester)
         .eq('is_active', true)
         .order('roll_number');
-      
+
       if (studentsData) setStudents(studentsData as Student[]);
 
-      // Get subjects for semester
-      const { data: subjectsData } = await supabase
-        .from('subjects')
-        .select('*')
-        .eq('semester_id', selectedSemester)
-        .eq('is_active', true);
-      
-      if (subjectsData) {
-        setSubjects(subjectsData as Subject[]);
-        if (subjectsData.length > 0) setSelectedSubject(subjectsData[0].id);
+      if (role === 'teacher') {
+        // For teachers: only show subjects they are assigned to for this semester
+        const assignedSubjectIds = teacherAssignments
+          .filter(a => a.semester_id === selectedSemester && a.subject_id)
+          .map(a => a.subject_id!);
+
+        if (assignedSubjectIds.length > 0) {
+          const { data: subjectsData } = await supabase
+            .from('subjects')
+            .select('*')
+            .in('id', assignedSubjectIds)
+            .eq('is_active', true);
+
+          if (subjectsData) {
+            setSubjects(subjectsData as Subject[]);
+            if (subjectsData.length > 0) setSelectedSubject(subjectsData[0].id);
+          }
+        } else {
+          setSubjects([]);
+          setSelectedSubject('');
+        }
+      } else {
+        // Admin sees all subjects for the semester
+        const { data: subjectsData } = await supabase
+          .from('subjects')
+          .select('*')
+          .eq('semester_id', selectedSemester)
+          .eq('is_active', true);
+
+        if (subjectsData) {
+          setSubjects(subjectsData as Subject[]);
+          if (subjectsData.length > 0) setSelectedSubject(subjectsData[0].id);
+        }
       }
     } catch (error) {
       console.error('Error fetching students:', error);
@@ -150,7 +175,7 @@ export default function AttendancePage() {
         .eq('semester_id', selectedSemester)
         .eq('subject_id', selectedSubject)
         .eq('date', selectedDate);
-      
+
       const map: Record<string, string> = {};
       data?.forEach(a => { map[a.student_id] = a.status; });
       setAttendanceMap(map);
@@ -165,9 +190,9 @@ export default function AttendancePage() {
 
   const handleSaveAttendance = async () => {
     if (!teacher && role !== 'admin') return;
-    
+
     setIsSaving(true);
-    
+
     try {
       const records = Object.entries(attendanceMap).map(([studentId, status]) => ({
         student_id: studentId,
@@ -185,9 +210,9 @@ export default function AttendancePage() {
         .eq('semester_id', selectedSemester)
         .eq('subject_id', selectedSubject)
         .eq('date', selectedDate);
-      
+
       const { error } = await supabase.from('attendance').insert(records);
-      
+
       if (error) throw error;
 
       toast({
@@ -228,7 +253,7 @@ export default function AttendancePage() {
             Attendance
           </h1>
           <p className="text-muted-foreground mt-1">
-            {isTeacher ? 'Take and manage attendance' : isStudent ? 'View your attendance' : 'Manage attendance records'}
+            {isTeacher ? 'Take attendance for your assigned subjects' : isStudent ? 'View your attendance' : 'Manage attendance records'}
           </p>
         </div>
       </div>
@@ -306,7 +331,7 @@ export default function AttendancePage() {
                   <label className="text-sm font-medium mb-2 block">Subject</label>
                   <Select value={selectedSubject} onValueChange={setSelectedSubject}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select subject" />
+                      <SelectValue placeholder={subjects.length === 0 ? 'No assigned subjects' : 'Select subject'} />
                     </SelectTrigger>
                     <SelectContent>
                       {subjects.map((subject) => (
@@ -334,7 +359,7 @@ export default function AttendancePage() {
           <Card className="mt-6">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Mark Attendance</CardTitle>
-              <Button onClick={handleSaveAttendance} disabled={isSaving || students.length === 0}>
+              <Button onClick={handleSaveAttendance} disabled={isSaving || students.length === 0 || !selectedSubject}>
                 {isSaving ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : (
@@ -347,6 +372,13 @@ export default function AttendancePage() {
               {isLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : !selectedSubject ? (
+                <div className="text-center py-8">
+                  <Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">
+                    {isTeacher ? 'No subjects assigned for this semester. Contact admin.' : 'Select a subject to mark attendance.'}
+                  </p>
                 </div>
               ) : students.length > 0 ? (
                 <Table>
