@@ -251,6 +251,7 @@ export type Database = {
           file_type: string | null
           file_url: string | null
           id: string
+          is_active: boolean | null
           semester_id: string
           subject_id: string | null
           teacher_id: string
@@ -264,6 +265,7 @@ export type Database = {
           file_type?: string | null
           file_url?: string | null
           id?: string
+          is_active?: boolean | null
           semester_id: string
           subject_id?: string | null
           teacher_id: string
@@ -277,6 +279,7 @@ export type Database = {
           file_type?: string | null
           file_url?: string | null
           id?: string
+          is_active?: boolean | null
           semester_id?: string
           subject_id?: string | null
           teacher_id?: string
