@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -33,6 +34,7 @@ export default function Students() {
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [batchCourseId, setBatchCourseId] = useState('');
   const [batchSemesterId, setBatchSemesterId] = useState('');
+  const [deleteStudentId, setDeleteStudentId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     email: '', full_name: '', phone: '', roll_number: '', course_id: '', current_semester_id: '',
@@ -65,15 +67,19 @@ export default function Students() {
     e.preventDefault();
     setIsCreating(true);
     try {
-      // Check for duplicate roll_number in same course
-      const { data: existing } = await supabase
-        .from('students')
-        .select('id')
-        .eq('roll_number', formData.roll_number)
-        .eq('course_id', formData.course_id)
-        .eq('is_active', true)
-        .maybeSingle();
+      // Check for deactivated student with same roll_number in same course
+      const { data: deactivated } = await supabase.from('students').select('id').eq('roll_number', formData.roll_number).eq('course_id', formData.course_id).eq('is_active', false).maybeSingle();
+      if (deactivated) {
+        await supabase.from('students').update({ is_active: true, current_semester_id: formData.current_semester_id }).eq('id', deactivated.id);
+        toast({ title: 'Student Reactivated', description: `A previously deactivated student with this roll number has been reactivated.` });
+        setIsDialogOpen(false);
+        setFormData({ email: '', full_name: '', phone: '', roll_number: '', course_id: '', current_semester_id: '', enrollment_year: new Date().getFullYear(), guardian_name: '', guardian_phone: '', address: '' });
+        fetchData();
+        setIsCreating(false);
+        return;
+      }
 
+      const { data: existing } = await supabase.from('students').select('id').eq('roll_number', formData.roll_number).eq('course_id', formData.course_id).eq('is_active', true).maybeSingle();
       if (existing) {
         toast({ variant: 'destructive', title: 'Duplicate Roll Number', description: 'This roll number already exists in the selected course.' });
         setIsCreating(false);
@@ -92,8 +98,7 @@ export default function Students() {
       }
     } catch (error: any) {
       const msg = error.message?.includes('duplicate') || error.message?.includes('23505')
-        ? 'This email or roll number is already in use. Please use unique values.'
-        : error.message;
+        ? 'This email or roll number is already in use. Please use unique values.' : error.message;
       toast({ variant: 'destructive', title: 'Error', description: msg });
     } finally { setIsCreating(false); }
   };
@@ -133,15 +138,16 @@ export default function Students() {
     } finally { setIsUpdating(false); }
   };
 
-  const handleDeleteStudent = async (studentId: string) => {
+  const handleDeleteStudent = async () => {
+    if (!deleteStudentId) return;
     try {
-      const { error } = await supabase.from('students').update({ is_active: false }).eq('id', studentId);
+      const { error } = await supabase.from('students').update({ is_active: false }).eq('id', deleteStudentId);
       if (error) throw error;
       toast({ title: 'Student Deactivated', description: 'The student has been deactivated.' });
       fetchData();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
-    }
+    } finally { setDeleteStudentId(null); }
   };
 
   const handlePhotoUpload = async (studentId: string, profileId: string, file: File) => {
@@ -258,7 +264,7 @@ export default function Students() {
                     <div className="space-y-2"><Label htmlFor="phone">Phone</Label><Input id="phone" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} /></div>
                     <div className="space-y-2">
                       <Label htmlFor="course_id">Course *</Label>
-                      <Select value={formData.course_id} onValueChange={(value) => setFormData({ ...formData, course_id: value })}>
+                      <Select value={formData.course_id} onValueChange={(value) => setFormData({ ...formData, course_id: value, current_semester_id: '' })}>
                         <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
                         <SelectContent>{courses.map((course) => (<SelectItem key={course.id} value={course.id}>{course.name} ({course.code})</SelectItem>))}</SelectContent>
                       </Select>
@@ -297,7 +303,6 @@ export default function Students() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Student</DialogTitle></DialogHeader>
           <form onSubmit={handleUpdateStudent} className="space-y-4 mt-4">
-            {/* Photo Upload */}
             {editingStudent && (
               <div className="flex items-center gap-4">
                 <Avatar className="h-16 w-16">
@@ -321,7 +326,7 @@ export default function Students() {
               <div className="space-y-2"><Label htmlFor="edit_roll_number">Roll Number *</Label><Input id="edit_roll_number" value={editFormData.roll_number} onChange={(e) => setEditFormData({ ...editFormData, roll_number: e.target.value })} required /></div>
               <div className="space-y-2">
                 <Label htmlFor="edit_course_id">Course *</Label>
-                <Select value={editFormData.course_id} onValueChange={(value) => setEditFormData({ ...editFormData, course_id: value })}>
+                <Select value={editFormData.course_id} onValueChange={(value) => setEditFormData({ ...editFormData, course_id: value, current_semester_id: '' })}>
                   <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
                   <SelectContent>{courses.map((course) => (<SelectItem key={course.id} value={course.id}>{course.name} ({course.code})</SelectItem>))}</SelectContent>
                 </Select>
@@ -347,6 +352,20 @@ export default function Students() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={!!deleteStudentId} onOpenChange={(open) => !open && setDeleteStudentId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate Student?</AlertDialogTitle>
+            <AlertDialogDescription>This will deactivate the student. They will no longer be able to access the system. You can reactivate by re-adding them with the same roll number and course.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteStudent} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Deactivate</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Filters */}
       <Card className="mt-6">
@@ -413,7 +432,7 @@ export default function Students() {
                       <TableCell>
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" onClick={() => handleEditStudent(student)}><Edit className="w-4 h-4" /></Button>
-                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => handleDeleteStudent(student.id)}><Trash2 className="w-4 h-4" /></Button>
+                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => setDeleteStudentId(student.id)}><Trash2 className="w-4 h-4" /></Button>
                         </div>
                       </TableCell>
                     )}

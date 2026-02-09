@@ -5,12 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { ClipboardList, Plus, Loader2, Calendar, FileText, Upload, Download, Edit, Trash2 } from 'lucide-react';
-import { Assignment, Semester, Teacher, Student } from '@/types/database';
+import { Assignment, Semester, Teacher, Student, Course } from '@/types/database';
 import { format } from 'date-fns';
 
 export default function Assignments() {
@@ -18,6 +19,7 @@ export default function Assignments() {
   const { toast } = useToast();
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [student, setStudent] = useState<Student | null>(null);
   const [submissions, setSubmissions] = useState<Record<string, boolean>>({});
@@ -29,180 +31,100 @@ export default function Assignments() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
+  const [deleteAssignmentId, setDeleteAssignmentId] = useState<string | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState<string>('');
 
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    semester_id: '',
-    due_date: '',
-    max_marks: 100,
-  });
+  const [formData, setFormData] = useState({ title: '', description: '', semester_id: '', due_date: '', max_marks: 100 });
+  const [editFormData, setEditFormData] = useState({ title: '', description: '', semester_id: '', due_date: '', max_marks: 100 });
 
-  const [editFormData, setEditFormData] = useState({
-    title: '',
-    description: '',
-    semester_id: '',
-    due_date: '',
-    max_marks: 100,
-  });
-
-  useEffect(() => {
-    fetchData();
-  }, [user, role]);
+  useEffect(() => { fetchData(); }, [user, role]);
 
   const fetchData = async () => {
     try {
       if (role === 'teacher' && user) {
-        const { data: teacherData } = await supabase
-          .from('teachers')
-          .select('*')
-          .eq('user_id', user.id)
-          .maybeSingle();
-
+        const { data: teacherData } = await supabase.from('teachers').select('*').eq('user_id', user.id).maybeSingle();
         if (teacherData) {
           setTeacher(teacherData as Teacher);
 
-          const { data: assignmentsData } = await supabase
-            .from('teacher_semester_assignments')
-            .select('semester_id')
-            .eq('teacher_id', teacherData.id);
-
+          const { data: assignmentsData } = await supabase.from('teacher_semester_assignments').select('semester_id').eq('teacher_id', teacherData.id);
           const semesterIds = assignmentsData?.map(a => a.semester_id) || [];
 
-          const { data } = await supabase
-            .from('assignments')
-            .select('*, semester:semesters(*)')
-            .eq('teacher_id', teacherData.id)
-            .eq('is_active', true)
-            .order('due_date', { ascending: false });
-
+          const { data } = await supabase.from('assignments').select('*, semester:semesters(*, course:courses(*))').eq('teacher_id', teacherData.id).eq('is_active', true).order('due_date', { ascending: false });
           if (data) setAssignments(data as Assignment[]);
 
-          const { data: semData } = await supabase
-            .from('semesters')
-            .select('*')
-            .in('id', semesterIds);
-
-          if (semData) setSemesters(semData as Semester[]);
+          const { data: semData } = await supabase.from('semesters').select('*, course:courses(*)').in('id', semesterIds);
+          if (semData) {
+            setSemesters(semData as Semester[]);
+            const courseMap = new Map<string, Course>();
+            semData.forEach((s: any) => { if (s.course) courseMap.set(s.course.id, s.course); });
+            setCourses(Array.from(courseMap.values()));
+          }
         }
       } else if (role === 'student' && user) {
-        const { data: studentData } = await supabase
-          .from('students')
-          .select('*')
-          .eq('user_id', user.id)
-          .maybeSingle();
-
+        const { data: studentData } = await supabase.from('students').select('*').eq('user_id', user.id).maybeSingle();
         if (studentData) {
           setStudent(studentData as Student);
-
-          const { data } = await supabase
-            .from('assignments')
-            .select('*, semester:semesters(*), teacher:teachers(*, profile:profiles(*))')
-            .eq('semester_id', studentData.current_semester_id)
-            .eq('is_active', true)
-            .order('due_date', { ascending: true });
-
+          const { data } = await supabase.from('assignments').select('*, semester:semesters(*), teacher:teachers(*, profile:profiles(*))').eq('semester_id', studentData.current_semester_id).eq('is_active', true).order('due_date', { ascending: true });
           if (data) setAssignments(data as Assignment[]);
 
-          const { data: subData } = await supabase
-            .from('assignment_submissions')
-            .select('assignment_id')
-            .eq('student_id', studentData.id);
-
+          const { data: subData } = await supabase.from('assignment_submissions').select('assignment_id').eq('student_id', studentData.id);
           const subMap: Record<string, boolean> = {};
           subData?.forEach(s => { subMap[s.assignment_id] = true; });
           setSubmissions(subMap);
         }
       } else if (role === 'admin') {
-        const [assignmentsRes, semestersRes] = await Promise.all([
-          supabase.from('assignments').select('*, semester:semesters(*), teacher:teachers(*, profile:profiles(*))').eq('is_active', true).order('due_date', { ascending: false }),
-          supabase.from('semesters').select('*').order('semester_number'),
+        const [assignmentsRes, semestersRes, coursesRes] = await Promise.all([
+          supabase.from('assignments').select('*, semester:semesters(*, course:courses(*)), teacher:teachers(*, profile:profiles(*))').eq('is_active', true).order('due_date', { ascending: false }),
+          supabase.from('semesters').select('*, course:courses(*)').order('semester_number'),
+          supabase.from('courses').select('*').eq('is_active', true),
         ]);
-
         if (assignmentsRes.data) setAssignments(assignmentsRes.data as Assignment[]);
         if (semestersRes.data) setSemesters(semestersRes.data as Semester[]);
+        if (coursesRes.data) setCourses(coursesRes.data as Course[]);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
-    } finally {
-      setIsLoading(false);
-    }
+    } finally { setIsLoading(false); }
   };
 
   const handleFileUpload = async (file: File) => {
     if (!teacher) return null;
-
     const fileExt = file.name.split('.').pop();
     const fileName = `assignments/${teacher.id}/${Date.now()}.${fileExt}`;
-
-    const { error } = await supabase.storage
-      .from('academic-files')
-      .upload(fileName, file);
-
+    const { error } = await supabase.storage.from('academic-files').upload(fileName, file);
     if (error) throw error;
-
-    const { data: { publicUrl } } = supabase.storage
-      .from('academic-files')
-      .getPublicUrl(fileName);
-
+    const { data: { publicUrl } } = supabase.storage.from('academic-files').getPublicUrl(fileName);
     return { url: publicUrl, name: file.name };
   };
 
   const handleCreateAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!teacher) return;
-
     setIsCreating(true);
-
     try {
       let fileData = null;
-      if (selectedFile) {
-        setUploadingFile(true);
-        fileData = await handleFileUpload(selectedFile);
-        setUploadingFile(false);
-      }
-
+      if (selectedFile) { setUploadingFile(true); fileData = await handleFileUpload(selectedFile); setUploadingFile(false); }
       const { error } = await supabase.from('assignments').insert({
-        teacher_id: teacher.id,
-        semester_id: formData.semester_id,
-        title: formData.title,
-        description: formData.description,
-        due_date: formData.due_date,
-        max_marks: formData.max_marks,
-        file_url: fileData?.url,
-        file_name: fileData?.name,
+        teacher_id: teacher.id, semester_id: formData.semester_id, title: formData.title,
+        description: formData.description, due_date: formData.due_date, max_marks: formData.max_marks,
+        file_url: fileData?.url, file_name: fileData?.name,
       });
-
       if (error) throw error;
-
-      toast({
-        title: 'Assignment Created',
-        description: 'The assignment has been created successfully.',
-      });
-
+      toast({ title: 'Assignment Created', description: 'The assignment has been created successfully.' });
       setIsDialogOpen(false);
       setFormData({ title: '', description: '', semester_id: '', due_date: '', max_marks: 100 });
       setSelectedFile(null);
       fetchData();
     } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.message,
-      });
-    } finally {
-      setIsCreating(false);
-    }
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally { setIsCreating(false); }
   };
 
   const handleEditAssignment = (assignment: Assignment) => {
     setEditingAssignment(assignment);
     setEditFormData({
-      title: assignment.title,
-      description: assignment.description || '',
-      semester_id: assignment.semester_id,
-      due_date: format(new Date(assignment.due_date), "yyyy-MM-dd'T'HH:mm"),
-      max_marks: assignment.max_marks,
+      title: assignment.title, description: assignment.description || '', semester_id: assignment.semester_id,
+      due_date: format(new Date(assignment.due_date), "yyyy-MM-dd'T'HH:mm"), max_marks: assignment.max_marks,
     });
     setIsEditDialogOpen(true);
   };
@@ -210,103 +132,50 @@ export default function Assignments() {
   const handleUpdateAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAssignment) return;
-
     setIsUpdating(true);
-
     try {
-      const { error } = await supabase
-        .from('assignments')
-        .update({
-          title: editFormData.title,
-          description: editFormData.description,
-          semester_id: editFormData.semester_id,
-          due_date: editFormData.due_date,
-          max_marks: editFormData.max_marks,
-        })
-        .eq('id', editingAssignment.id);
-
+      const { error } = await supabase.from('assignments').update({
+        title: editFormData.title, description: editFormData.description, semester_id: editFormData.semester_id,
+        due_date: editFormData.due_date, max_marks: editFormData.max_marks,
+      }).eq('id', editingAssignment.id);
       if (error) throw error;
-
-      toast({
-        title: 'Assignment Updated',
-        description: 'The assignment has been updated successfully.',
-      });
-
+      toast({ title: 'Assignment Updated', description: 'The assignment has been updated successfully.' });
       setIsEditDialogOpen(false);
       setEditingAssignment(null);
       fetchData();
     } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.message,
-      });
-    } finally {
-      setIsUpdating(false);
-    }
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally { setIsUpdating(false); }
   };
 
-  const handleDeleteAssignment = async (assignmentId: string) => {
+  const handleDeleteAssignment = async () => {
+    if (!deleteAssignmentId) return;
     try {
-      const { error } = await supabase
-        .from('assignments')
-        .update({ is_active: false })
-        .eq('id', assignmentId);
-
+      const { error } = await supabase.from('assignments').update({ is_active: false }).eq('id', deleteAssignmentId);
       if (error) throw error;
-
-      toast({
-        title: 'Assignment Removed',
-        description: 'The assignment has been deactivated.',
-      });
+      toast({ title: 'Assignment Deactivated', description: 'The assignment has been deactivated.' });
       fetchData();
     } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.message,
-      });
-    }
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally { setDeleteAssignmentId(null); }
   };
 
   const handleSubmitAssignment = async (assignmentId: string, file: File) => {
     if (!student) return;
-
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `submissions/${student.id}/${assignmentId}/${Date.now()}.${fileExt}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('academic-files')
-        .upload(fileName, file);
-
+      const { error: uploadError } = await supabase.storage.from('academic-files').upload(fileName, file);
       if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('academic-files')
-        .getPublicUrl(fileName);
-
+      const { data: { publicUrl } } = supabase.storage.from('academic-files').getPublicUrl(fileName);
       const { error } = await supabase.from('assignment_submissions').insert({
-        assignment_id: assignmentId,
-        student_id: student.id,
-        file_url: publicUrl,
-        file_name: file.name,
+        assignment_id: assignmentId, student_id: student.id, file_url: publicUrl, file_name: file.name,
       });
-
       if (error) throw error;
-
-      toast({
-        title: 'Assignment Submitted',
-        description: 'Your assignment has been submitted successfully.',
-      });
-
+      toast({ title: 'Assignment Submitted', description: 'Your assignment has been submitted successfully.' });
       setSubmissions({ ...submissions, [assignmentId]: true });
     } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.message,
-      });
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
   };
 
@@ -314,6 +183,9 @@ export default function Assignments() {
   const isStudent = role === 'student';
   const isAdmin = role === 'admin';
   const canEdit = isTeacher || isAdmin;
+
+  // Filter semesters by selected course for the create form
+  const formFilteredSemesters = selectedCourse ? semesters.filter(s => s.course_id === selectedCourse) : semesters;
 
   return (
     <div className="page-container">
@@ -330,54 +202,37 @@ export default function Assignments() {
         {isTeacher && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="w-4 h-4" />
-                Create Assignment
-              </Button>
+              <Button className="gap-2"><Plus className="w-4 h-4" />Create Assignment</Button>
             </DialogTrigger>
             <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Create New Assignment</DialogTitle>
-              </DialogHeader>
+              <DialogHeader><DialogTitle>Create New Assignment</DialogTitle></DialogHeader>
               <form onSubmit={handleCreateAssignment} className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="title">Title *</Label>
-                  <Input id="title" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} required />
-                </div>
+                <div className="space-y-2"><Label htmlFor="title">Title *</Label><Input id="title" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} required /></div>
+                {courses.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Course</Label>
+                    <Select value={selectedCourse} onValueChange={(v) => { setSelectedCourse(v); setFormData({ ...formData, semester_id: '' }); }}>
+                      <SelectTrigger><SelectValue placeholder="Filter by course" /></SelectTrigger>
+                      <SelectContent>{courses.map((c) => (<SelectItem key={c.id} value={c.id}>{c.name} ({c.code})</SelectItem>))}</SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="semester_id">Semester *</Label>
                   <Select value={formData.semester_id} onValueChange={(value) => setFormData({ ...formData, semester_id: value })}>
                     <SelectTrigger><SelectValue placeholder="Select semester" /></SelectTrigger>
-                    <SelectContent>
-                      {semesters.map((semester) => (
-                        <SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>
-                      ))}
-                    </SelectContent>
+                    <SelectContent>{formFilteredSemesters.map((semester) => (<SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>))}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea id="description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={3} />
-                </div>
+                <div className="space-y-2"><Label htmlFor="description">Description</Label><Textarea id="description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={3} /></div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="due_date">Due Date *</Label>
-                    <Input id="due_date" type="datetime-local" value={formData.due_date} onChange={(e) => setFormData({ ...formData, due_date: e.target.value })} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="max_marks">Max Marks</Label>
-                    <Input id="max_marks" type="number" value={formData.max_marks} onChange={(e) => setFormData({ ...formData, max_marks: parseInt(e.target.value) })} />
-                  </div>
+                  <div className="space-y-2"><Label htmlFor="due_date">Due Date *</Label><Input id="due_date" type="datetime-local" value={formData.due_date} onChange={(e) => setFormData({ ...formData, due_date: e.target.value })} required /></div>
+                  <div className="space-y-2"><Label htmlFor="max_marks">Max Marks</Label><Input id="max_marks" type="number" value={formData.max_marks} onChange={(e) => setFormData({ ...formData, max_marks: parseInt(e.target.value) })} /></div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="file">Attachment (Optional)</Label>
-                  <Input id="file" type="file" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} />
-                </div>
+                <div className="space-y-2"><Label htmlFor="file">Attachment (Optional)</Label><Input id="file" type="file" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} /></div>
                 <div className="flex justify-end gap-3">
                   <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-                  <Button type="submit" disabled={isCreating}>
-                    {isCreating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{uploadingFile ? 'Uploading...' : 'Creating...'}</> : 'Create'}
-                  </Button>
+                  <Button type="submit" disabled={isCreating}>{isCreating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{uploadingFile ? 'Uploading...' : 'Creating...'}</> : 'Create'}</Button>
                 </div>
               </form>
             </DialogContent>
@@ -388,123 +243,86 @@ export default function Assignments() {
       {/* Edit Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit Assignment</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Edit Assignment</DialogTitle></DialogHeader>
           <form onSubmit={handleUpdateAssignment} className="space-y-4 mt-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit_title">Title *</Label>
-              <Input id="edit_title" value={editFormData.title} onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })} required />
-            </div>
+            <div className="space-y-2"><Label htmlFor="edit_title">Title *</Label><Input id="edit_title" value={editFormData.title} onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })} required /></div>
             <div className="space-y-2">
               <Label htmlFor="edit_semester_id">Semester *</Label>
               <Select value={editFormData.semester_id} onValueChange={(value) => setEditFormData({ ...editFormData, semester_id: value })}>
                 <SelectTrigger><SelectValue placeholder="Select semester" /></SelectTrigger>
-                <SelectContent>
-                  {semesters.map((semester) => (
-                    <SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>
-                  ))}
-                </SelectContent>
+                <SelectContent>{semesters.map((semester) => (<SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>))}</SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit_description">Description</Label>
-              <Textarea id="edit_description" value={editFormData.description} onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })} rows={3} />
-            </div>
+            <div className="space-y-2"><Label htmlFor="edit_description">Description</Label><Textarea id="edit_description" value={editFormData.description} onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })} rows={3} /></div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit_due_date">Due Date *</Label>
-                <Input id="edit_due_date" type="datetime-local" value={editFormData.due_date} onChange={(e) => setEditFormData({ ...editFormData, due_date: e.target.value })} required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit_max_marks">Max Marks</Label>
-                <Input id="edit_max_marks" type="number" value={editFormData.max_marks} onChange={(e) => setEditFormData({ ...editFormData, max_marks: parseInt(e.target.value) })} />
-              </div>
+              <div className="space-y-2"><Label htmlFor="edit_due_date">Due Date *</Label><Input id="edit_due_date" type="datetime-local" value={editFormData.due_date} onChange={(e) => setEditFormData({ ...editFormData, due_date: e.target.value })} required /></div>
+              <div className="space-y-2"><Label htmlFor="edit_max_marks">Max Marks</Label><Input id="edit_max_marks" type="number" value={editFormData.max_marks} onChange={(e) => setEditFormData({ ...editFormData, max_marks: parseInt(e.target.value) })} /></div>
             </div>
             <div className="flex justify-end gap-3">
               <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={isUpdating}>
-                {isUpdating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</> : 'Update'}
-              </Button>
+              <Button type="submit" disabled={isUpdating}>{isUpdating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</> : 'Update'}</Button>
             </div>
           </form>
         </DialogContent>
       </Dialog>
 
+      {/* Delete Confirmation */}
+      <AlertDialog open={!!deleteAssignmentId} onOpenChange={(open) => !open && setDeleteAssignmentId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate Assignment?</AlertDialogTitle>
+            <AlertDialogDescription>This will deactivate the assignment. Student submissions will be preserved.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteAssignment} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Deactivate</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Assignments Grid */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-        </div>
+        <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
       ) : assignments.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
           {assignments.map((assignment, index) => {
             const isPastDue = new Date(assignment.due_date) < new Date();
             const isSubmitted = submissions[assignment.id];
-
             return (
               <Card key={assignment.id} className="card-interactive animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
                 <CardContent className="p-6">
                   <div className="flex items-start justify-between mb-4">
-                    <div className="p-2 rounded-lg bg-warning/10">
-                      <ClipboardList className="w-5 h-5 text-warning" />
-                    </div>
+                    <div className="p-2 rounded-lg bg-warning/10"><ClipboardList className="w-5 h-5 text-warning" /></div>
                     <div className="flex items-center gap-1">
                       {canEdit && (
                         <>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditAssignment(assignment)}>
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDeleteAssignment(assignment.id)}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditAssignment(assignment)}><Edit className="w-4 h-4" /></Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeleteAssignmentId(assignment.id)}><Trash2 className="w-4 h-4" /></Button>
                         </>
                       )}
-                      <span className={`text-xs px-2 py-1 rounded font-medium ${
-                        isSubmitted ? 'bg-success/10 text-success' :
-                        isPastDue ? 'bg-destructive/10 text-destructive' :
-                        'bg-warning/10 text-warning'
-                      }`}>
+                      <span className={`text-xs px-2 py-1 rounded font-medium ${isSubmitted ? 'bg-success/10 text-success' : isPastDue ? 'bg-destructive/10 text-destructive' : 'bg-warning/10 text-warning'}`}>
                         {isSubmitted ? 'Submitted' : isPastDue ? 'Past Due' : 'Pending'}
                       </span>
                     </div>
                   </div>
                   <h3 className="font-semibold text-lg mb-2">{assignment.title}</h3>
-                  <p className="text-sm text-muted-foreground line-clamp-2 mb-4">
-                    {assignment.description || 'No description'}
-                  </p>
+                  <p className="text-sm text-muted-foreground line-clamp-2 mb-4">{assignment.description || 'No description'}</p>
                   <div className="space-y-2 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="w-4 h-4" />
-                      <span>Due: {format(new Date(assignment.due_date), 'MMM d, yyyy h:mm a')}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4" />
-                      <span>Max Marks: {assignment.max_marks}</span>
-                    </div>
+                    <div className="flex items-center gap-2"><Calendar className="w-4 h-4" /><span>Due: {format(new Date(assignment.due_date), 'MMM d, yyyy h:mm a')}</span></div>
+                    <div className="flex items-center gap-2"><FileText className="w-4 h-4" /><span>Max Marks: {assignment.max_marks}</span></div>
                   </div>
                   {assignment.file_url && (
                     <a href={assignment.file_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 mt-4 text-sm text-accent hover:underline">
-                      <Download className="w-4 h-4" />
-                      {assignment.file_name || 'Download attachment'}
+                      <Download className="w-4 h-4" />{assignment.file_name || 'Download attachment'}
                     </a>
                   )}
                   {isStudent && !isSubmitted && !isPastDue && (
                     <div className="mt-4">
                       <Label htmlFor={`submit-${assignment.id}`} className="cursor-pointer">
                         <div className="flex items-center gap-2 p-3 rounded-lg border-2 border-dashed hover:border-accent transition-colors">
-                          <Upload className="w-4 h-4" />
-                          <span className="text-sm">Submit your work</span>
+                          <Upload className="w-4 h-4" /><span className="text-sm">Submit your work</span>
                         </div>
-                        <input
-                          id={`submit-${assignment.id}`}
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleSubmitAssignment(assignment.id, file);
-                          }}
-                        />
+                        <input id={`submit-${assignment.id}`} type="file" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleSubmitAssignment(assignment.id, file); }} />
                       </Label>
                     </div>
                   )}
