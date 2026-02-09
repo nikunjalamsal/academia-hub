@@ -5,12 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { FileText, Plus, Loader2, Download, File as FileIcon, Folder, Edit, Trash2 } from 'lucide-react';
-import { Material, Semester, Teacher } from '@/types/database';
+import { Material, Semester, Teacher, Course } from '@/types/database';
 import { format } from 'date-fns';
 
 export default function Materials() {
@@ -18,6 +19,7 @@ export default function Materials() {
   const { toast } = useToast();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -27,6 +29,8 @@ export default function Materials() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
+  const [deleteMaterialId, setDeleteMaterialId] = useState<string | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState<string>('');
 
   const [formData, setFormData] = useState({ title: '', description: '', semester_id: '' });
   const [editFormData, setEditFormData] = useState({ title: '', description: '', semester_id: '' });
@@ -41,10 +45,15 @@ export default function Materials() {
           setTeacher(teacherData as Teacher);
           const { data: assignmentsData } = await supabase.from('teacher_semester_assignments').select('semester_id').eq('teacher_id', teacherData.id);
           const semesterIds = assignmentsData?.map(a => a.semester_id) || [];
-          const { data } = await supabase.from('materials').select('*, semester:semesters(*)').eq('teacher_id', teacherData.id).eq('is_active', true).order('created_at', { ascending: false });
+          const { data } = await supabase.from('materials').select('*, semester:semesters(*, course:courses(*))').eq('teacher_id', teacherData.id).eq('is_active', true).order('created_at', { ascending: false });
           if (data) setMaterials(data as Material[]);
-          const { data: semData } = await supabase.from('semesters').select('*').in('id', semesterIds);
-          if (semData) setSemesters(semData as Semester[]);
+          const { data: semData } = await supabase.from('semesters').select('*, course:courses(*)').in('id', semesterIds);
+          if (semData) {
+            setSemesters(semData as Semester[]);
+            const courseMap = new Map<string, Course>();
+            semData.forEach((s: any) => { if (s.course) courseMap.set(s.course.id, s.course); });
+            setCourses(Array.from(courseMap.values()));
+          }
         }
       } else if (role === 'student' && user) {
         const { data: studentData } = await supabase.from('students').select('*').eq('user_id', user.id).maybeSingle();
@@ -53,18 +62,18 @@ export default function Materials() {
           if (data) setMaterials(data as Material[]);
         }
       } else if (role === 'admin') {
-        const [materialsRes, semestersRes] = await Promise.all([
-          supabase.from('materials').select('*, semester:semesters(*), teacher:teachers(*, profile:profiles(*))').eq('is_active', true).order('created_at', { ascending: false }),
-          supabase.from('semesters').select('*').order('semester_number'),
+        const [materialsRes, semestersRes, coursesRes] = await Promise.all([
+          supabase.from('materials').select('*, semester:semesters(*, course:courses(*)), teacher:teachers(*, profile:profiles(*))').eq('is_active', true).order('created_at', { ascending: false }),
+          supabase.from('semesters').select('*, course:courses(*)').order('semester_number'),
+          supabase.from('courses').select('*').eq('is_active', true),
         ]);
         if (materialsRes.data) setMaterials(materialsRes.data as Material[]);
         if (semestersRes.data) setSemesters(semestersRes.data as Semester[]);
+        if (coursesRes.data) setCourses(coursesRes.data as Course[]);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
-    } finally {
-      setIsLoading(false);
-    }
+    } finally { setIsLoading(false); }
   };
 
   const handleFileUpload = async (file: File) => {
@@ -123,22 +132,23 @@ export default function Materials() {
     } finally { setIsUpdating(false); }
   };
 
-  const handleDeleteMaterial = async (materialId: string) => {
+  const handleDeleteMaterial = async () => {
+    if (!deleteMaterialId) return;
     try {
-      // Soft delete by removing the file reference but keeping the record
-      const { error } = await supabase.from('materials').update({ title: '[Deleted] ' + (materials.find(m => m.id === materialId)?.title || ''), description: 'This material has been removed.' }).eq('id', materialId);
+      const { error } = await supabase.from('materials').update({ is_active: false }).eq('id', deleteMaterialId);
       if (error) throw error;
-      toast({ title: 'Material Removed', description: 'The material has been removed from view.' });
-      // Remove from local state
-      setMaterials(prev => prev.filter(m => m.id !== materialId));
+      toast({ title: 'Material Deactivated', description: 'The material has been deactivated.' });
+      fetchData();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
-    }
+    } finally { setDeleteMaterialId(null); }
   };
 
   const isTeacher = role === 'teacher';
   const isAdmin = role === 'admin';
   const canEdit = isTeacher || isAdmin;
+
+  const formFilteredSemesters = selectedCourse ? semesters.filter(s => s.course_id === selectedCourse) : semesters;
 
   const getFileIcon = (fileType?: string) => {
     if (!fileType) return <FileIcon className="w-5 h-5" />;
@@ -157,9 +167,7 @@ export default function Materials() {
             <FileText className="w-8 h-8 text-accent" />
             Study Materials
           </h1>
-          <p className="text-muted-foreground mt-1">
-            {isTeacher ? 'Upload and manage study materials' : 'Access study materials'}
-          </p>
+          <p className="text-muted-foreground mt-1">{isTeacher ? 'Upload and manage study materials' : 'Access study materials'}</p>
         </div>
         {isTeacher && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -169,32 +177,28 @@ export default function Materials() {
             <DialogContent className="max-w-lg">
               <DialogHeader><DialogTitle>Upload Study Material</DialogTitle></DialogHeader>
               <form onSubmit={handleCreateMaterial} className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="title">Title *</Label>
-                  <Input id="title" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} required />
-                </div>
+                <div className="space-y-2"><Label htmlFor="title">Title *</Label><Input id="title" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} required /></div>
+                {courses.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Course</Label>
+                    <Select value={selectedCourse} onValueChange={(v) => { setSelectedCourse(v); setFormData({ ...formData, semester_id: '' }); }}>
+                      <SelectTrigger><SelectValue placeholder="Filter by course" /></SelectTrigger>
+                      <SelectContent>{courses.map((c) => (<SelectItem key={c.id} value={c.id}>{c.name} ({c.code})</SelectItem>))}</SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="semester_id">Semester *</Label>
                   <Select value={formData.semester_id} onValueChange={(value) => setFormData({ ...formData, semester_id: value })}>
                     <SelectTrigger><SelectValue placeholder="Select semester" /></SelectTrigger>
-                    <SelectContent>
-                      {semesters.map((semester) => (<SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>))}
-                    </SelectContent>
+                    <SelectContent>{formFilteredSemesters.map((semester) => (<SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>))}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea id="description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={3} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="file">File *</Label>
-                  <Input id="file" type="file" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} required />
-                </div>
+                <div className="space-y-2"><Label htmlFor="description">Description</Label><Textarea id="description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={3} /></div>
+                <div className="space-y-2"><Label htmlFor="file">File *</Label><Input id="file" type="file" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} required /></div>
                 <div className="flex justify-end gap-3">
                   <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-                  <Button type="submit" disabled={isCreating || !selectedFile}>
-                    {isCreating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{uploadingFile ? 'Uploading...' : 'Saving...'}</> : 'Upload'}
-                  </Button>
+                  <Button type="submit" disabled={isCreating || !selectedFile}>{isCreating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{uploadingFile ? 'Uploading...' : 'Saving...'}</> : 'Upload'}</Button>
                 </div>
               </form>
             </DialogContent>
@@ -207,77 +211,65 @@ export default function Materials() {
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Edit Study Material</DialogTitle></DialogHeader>
           <form onSubmit={handleUpdateMaterial} className="space-y-4 mt-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit_title">Title *</Label>
-              <Input id="edit_title" value={editFormData.title} onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })} required />
-            </div>
+            <div className="space-y-2"><Label htmlFor="edit_title">Title *</Label><Input id="edit_title" value={editFormData.title} onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })} required /></div>
             <div className="space-y-2">
               <Label htmlFor="edit_semester_id">Semester *</Label>
               <Select value={editFormData.semester_id} onValueChange={(value) => setEditFormData({ ...editFormData, semester_id: value })}>
                 <SelectTrigger><SelectValue placeholder="Select semester" /></SelectTrigger>
-                <SelectContent>
-                  {semesters.map((semester) => (<SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>))}
-                </SelectContent>
+                <SelectContent>{semesters.map((semester) => (<SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>))}</SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit_description">Description</Label>
-              <Textarea id="edit_description" value={editFormData.description} onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })} rows={3} />
-            </div>
+            <div className="space-y-2"><Label htmlFor="edit_description">Description</Label><Textarea id="edit_description" value={editFormData.description} onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })} rows={3} /></div>
             <div className="flex justify-end gap-3">
               <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={isUpdating}>
-                {isUpdating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</> : 'Update'}
-              </Button>
+              <Button type="submit" disabled={isUpdating}>{isUpdating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</> : 'Update'}</Button>
             </div>
           </form>
         </DialogContent>
       </Dialog>
 
+      {/* Delete Confirmation */}
+      <AlertDialog open={!!deleteMaterialId} onOpenChange={(open) => !open && setDeleteMaterialId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate Material?</AlertDialogTitle>
+            <AlertDialogDescription>This will deactivate the study material. It will no longer be visible to students.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteMaterial} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Deactivate</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Materials Grid */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-        </div>
+        <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
       ) : materials.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
           {materials.map((material, index) => (
             <Card key={material.id} className="card-interactive animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
               <CardContent className="p-6">
                 <div className="flex items-start gap-4">
-                  <div className="p-3 rounded-lg bg-accent/10">
-                    {getFileIcon(material.file_type)}
-                  </div>
+                  <div className="p-3 rounded-lg bg-accent/10">{getFileIcon(material.file_type)}</div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <h3 className="font-semibold text-lg truncate">{material.title}</h3>
                       {canEdit && (
                         <div className="flex gap-1 flex-shrink-0">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditMaterial(material)}>
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDeleteMaterial(material.id)}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditMaterial(material)}><Edit className="w-4 h-4" /></Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeleteMaterialId(material.id)}><Trash2 className="w-4 h-4" /></Button>
                         </div>
                       )}
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {(material.semester as any)?.name}
-                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">{(material.semester as any)?.name}</p>
                   </div>
                 </div>
-                {material.description && (
-                  <p className="text-sm text-muted-foreground mt-4 line-clamp-2">{material.description}</p>
-                )}
+                {material.description && (<p className="text-sm text-muted-foreground mt-4 line-clamp-2">{material.description}</p>)}
                 <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                  <span className="text-xs text-muted-foreground">
-                    {format(new Date(material.created_at), 'MMM d, yyyy')}
-                  </span>
+                  <span className="text-xs text-muted-foreground">{format(new Date(material.created_at), 'MMM d, yyyy')}</span>
                   {material.file_url && (
-                    <a href={material.file_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-accent hover:underline">
-                      <Download className="w-4 h-4" />Download
-                    </a>
+                    <a href={material.file_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm text-accent hover:underline"><Download className="w-4 h-4" />Download</a>
                   )}
                 </div>
               </CardContent>

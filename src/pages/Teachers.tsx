@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -29,6 +30,7 @@ export default function Teachers() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<string>('');
+  const [deleteTeacherId, setDeleteTeacherId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     email: '', full_name: '', phone: '', employee_id: '', department: '', designation: '', qualification: '',
@@ -62,7 +64,21 @@ export default function Teachers() {
     e.preventDefault();
     setIsCreating(true);
     try {
-      // Check for duplicate employee_id
+      // Check for deactivated teacher with same employee_id first
+      const { data: deactivated } = await supabase.from('teachers').select('id').eq('employee_id', formData.employee_id).eq('is_active', false).maybeSingle();
+      if (deactivated) {
+        // Reactivate
+        await supabase.from('teachers').update({ is_active: true }).eq('id', deactivated.id);
+        toast({ title: 'Teacher Reactivated', description: `A previously deactivated teacher with this Employee ID has been reactivated.` });
+        setIsDialogOpen(false);
+        setFormData({ email: '', full_name: '', phone: '', employee_id: '', department: '', designation: '', qualification: '' });
+        setSelectedSemesters([]);
+        setSelectedCourse('');
+        fetchData();
+        setIsCreating(false);
+        return;
+      }
+
       const { data: existing } = await supabase.from('teachers').select('id').eq('employee_id', formData.employee_id).maybeSingle();
       if (existing) {
         toast({ variant: 'destructive', title: 'Duplicate Employee ID', description: 'A teacher with this Employee ID already exists.' });
@@ -70,8 +86,11 @@ export default function Teachers() {
         return;
       }
 
+      // Only include semester assignments that have a valid subject_id selected
+      const validAssignments = selectedSemesters.filter(s => s.subject_id);
+
       const response = await supabase.functions.invoke('create-user', {
-        body: { ...formData, role: 'teacher', semester_assignments: selectedSemesters.filter(s => s.subject_name || s.subject_id) },
+        body: { ...formData, role: 'teacher', semester_assignments: validAssignments },
       });
       if (response.error) throw response.error;
       if (response.data?.success) {
@@ -130,14 +149,17 @@ export default function Teachers() {
     } finally { setIsUpdating(false); }
   };
 
-  const handleDeleteTeacher = async (teacherId: string) => {
+  const handleDeleteTeacher = async () => {
+    if (!deleteTeacherId) return;
     try {
-      const { error } = await supabase.from('teachers').update({ is_active: false }).eq('id', teacherId);
+      const { error } = await supabase.from('teachers').update({ is_active: false }).eq('id', deleteTeacherId);
       if (error) throw error;
       toast({ title: 'Teacher Deactivated', description: 'The teacher has been deactivated.' });
       fetchData();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally {
+      setDeleteTeacherId(null);
     }
   };
 
@@ -247,7 +269,7 @@ export default function Teachers() {
                                     </SelectContent>
                                   </Select>
                                 ) : (
-                                  <Input placeholder="Enter subject name (no subjects defined)" value={isSelected.subject_name} onChange={(e) => updateSubjectSelection(semester.id, '', e.target.value)} className="text-sm" />
+                                  <p className="text-sm text-muted-foreground italic">No subjects defined for this semester. Please add subjects in Courses first.</p>
                                 )}
                               </div>
                             )}
@@ -280,7 +302,6 @@ export default function Teachers() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Teacher</DialogTitle></DialogHeader>
           <form onSubmit={handleUpdateTeacher} className="space-y-4 mt-4">
-            {/* Photo Upload */}
             {editingTeacher && (
               <div className="flex items-center gap-4">
                 <Avatar className="h-16 w-16">
@@ -315,6 +336,22 @@ export default function Teachers() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={!!deleteTeacherId} onOpenChange={(open) => !open && setDeleteTeacherId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate Teacher?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will deactivate the teacher. They will no longer be able to access the system. This action can be reversed by re-adding them with the same Employee ID.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteTeacher} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Deactivate</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Search */}
       <Card className="mt-6">
@@ -362,7 +399,7 @@ export default function Teachers() {
                       <TableCell>
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" onClick={() => handleEditTeacher(teacher)}><Edit className="w-4 h-4" /></Button>
-                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => handleDeleteTeacher(teacher.id)}><Trash2 className="w-4 h-4" /></Button>
+                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => setDeleteTeacherId(teacher.id)}><Trash2 className="w-4 h-4" /></Button>
                         </div>
                       </TableCell>
                     )}

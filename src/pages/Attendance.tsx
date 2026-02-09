@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Calendar, Loader2, Check, X, Clock, AlertCircle, Save } from 'lucide-react';
-import { Attendance, Semester, Teacher, Student, Subject } from '@/types/database';
+import { Attendance, Semester, Teacher, Student, Subject, Course } from '@/types/database';
 import { format } from 'date-fns';
 
 export default function AttendancePage() {
@@ -17,8 +17,10 @@ export default function AttendancePage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [student, setStudent] = useState<Student | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState<string>('');
   const [selectedSemester, setSelectedSemester] = useState<string>('');
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
@@ -27,23 +29,15 @@ export default function AttendancePage() {
   const [isSaving, setIsSaving] = useState(false);
   const [teacherAssignments, setTeacherAssignments] = useState<{ semester_id: string; subject_id: string | null; subject_name: string }[]>([]);
 
-  useEffect(() => {
-    fetchData();
-  }, [user, role]);
+  useEffect(() => { fetchData(); }, [user, role]);
 
   const fetchData = async () => {
     try {
       if (role === 'teacher' && user) {
-        const { data: teacherData } = await supabase
-          .from('teachers')
-          .select('*')
-          .eq('user_id', user.id)
-          .maybeSingle();
-
+        const { data: teacherData } = await supabase.from('teachers').select('*').eq('user_id', user.id).maybeSingle();
         if (teacherData) {
           setTeacher(teacherData as Teacher);
 
-          // Get teacher's assignments with subject info
           const { data: assignmentsData } = await supabase
             .from('teacher_semester_assignments')
             .select('semester_id, subject_id, subject_name')
@@ -55,16 +49,14 @@ export default function AttendancePage() {
 
           const semesterIds = [...new Set(assignments.map(a => a.semester_id))];
 
-          // Get semesters
           if (semesterIds.length > 0) {
-            const { data: semData } = await supabase
-              .from('semesters')
-              .select('*')
-              .in('id', semesterIds);
-
+            const { data: semData } = await supabase.from('semesters').select('*, course:courses(*)').in('id', semesterIds);
             if (semData) {
               setSemesters(semData as Semester[]);
-              if (semData.length > 0) setSelectedSemester(semData[0].id);
+              // Extract unique courses from these semesters
+              const courseMap = new Map<string, Course>();
+              semData.forEach((s: any) => { if (s.course) courseMap.set(s.course.id, s.course); });
+              setCourses(Array.from(courseMap.values()));
             }
           }
         }
@@ -77,32 +69,33 @@ export default function AttendancePage() {
 
         if (studentData) {
           setStudent(studentData as Student);
-
           const { data } = await supabase
             .from('attendance')
             .select('*, subject:subjects(*)')
             .eq('student_id', studentData.id)
             .order('date', { ascending: false });
-
           if (data) setAttendance(data as Attendance[]);
         }
       } else if (role === 'admin') {
-        const { data: semData } = await supabase
-          .from('semesters')
-          .select('*')
-          .order('semester_number');
-
-        if (semData) {
-          setSemesters(semData as Semester[]);
-          if (semData.length > 0) setSelectedSemester(semData[0].id);
-        }
+        const [semRes, courseRes] = await Promise.all([
+          supabase.from('semesters').select('*, course:courses(*)').order('semester_number'),
+          supabase.from('courses').select('*').eq('is_active', true),
+        ]);
+        if (semRes.data) setSemesters(semRes.data as Semester[]);
+        if (courseRes.data) setCourses(courseRes.data as Course[]);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
-    } finally {
-      setIsLoading(false);
-    }
+    } finally { setIsLoading(false); }
   };
+
+  // When course changes, reset semester/subject
+  useEffect(() => {
+    setSelectedSemester('');
+    setSelectedSubject('');
+    setStudents([]);
+    setSubjects([]);
+  }, [selectedCourse]);
 
   useEffect(() => {
     if (selectedSemester && (role === 'teacher' || role === 'admin')) {
@@ -118,7 +111,6 @@ export default function AttendancePage() {
 
   const fetchStudentsAndSubjects = async () => {
     try {
-      // Get students in selected semester
       const { data: studentsData } = await supabase
         .from('students')
         .select('*, profile:profiles(*)')
@@ -129,7 +121,6 @@ export default function AttendancePage() {
       if (studentsData) setStudents(studentsData as Student[]);
 
       if (role === 'teacher') {
-        // For teachers: only show subjects they are assigned to for this semester
         const assignedSubjectIds = teacherAssignments
           .filter(a => a.semester_id === selectedSemester && a.subject_id)
           .map(a => a.subject_id!);
@@ -143,14 +134,13 @@ export default function AttendancePage() {
 
           if (subjectsData) {
             setSubjects(subjectsData as Subject[]);
-            if (subjectsData.length > 0) setSelectedSubject(subjectsData[0].id);
+            if (subjectsData.length > 0 && !selectedSubject) setSelectedSubject(subjectsData[0].id);
           }
         } else {
           setSubjects([]);
           setSelectedSubject('');
         }
       } else {
-        // Admin sees all subjects for the semester
         const { data: subjectsData } = await supabase
           .from('subjects')
           .select('*')
@@ -159,7 +149,7 @@ export default function AttendancePage() {
 
         if (subjectsData) {
           setSubjects(subjectsData as Subject[]);
-          if (subjectsData.length > 0) setSelectedSubject(subjectsData[0].id);
+          if (subjectsData.length > 0 && !selectedSubject) setSelectedSubject(subjectsData[0].id);
         }
       }
     } catch (error) {
@@ -190,9 +180,12 @@ export default function AttendancePage() {
 
   const handleSaveAttendance = async () => {
     if (!teacher && role !== 'admin') return;
+    if (!selectedSubject || !selectedSemester) {
+      toast({ variant: 'destructive', title: 'Validation Error', description: 'Please select course, semester, and subject.' });
+      return;
+    }
 
     setIsSaving(true);
-
     try {
       const records = Object.entries(attendanceMap).map(([studentId, status]) => ({
         student_id: studentId,
@@ -203,36 +196,33 @@ export default function AttendancePage() {
         status,
       }));
 
-      // Delete existing and insert new
-      await supabase
-        .from('attendance')
-        .delete()
+      await supabase.from('attendance').delete()
         .eq('semester_id', selectedSemester)
         .eq('subject_id', selectedSubject)
         .eq('date', selectedDate);
 
       const { error } = await supabase.from('attendance').insert(records);
-
       if (error) throw error;
 
-      toast({
-        title: 'Attendance Saved',
-        description: 'Attendance has been recorded successfully.',
-      });
+      toast({ title: 'Attendance Saved', description: 'Attendance has been recorded successfully.' });
     } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: error.message,
-      });
-    } finally {
-      setIsSaving(false);
-    }
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally { setIsSaving(false); }
   };
 
   const isTeacher = role === 'teacher';
   const isStudent = role === 'student';
   const isAdmin = role === 'admin';
+
+  // Filter semesters by selected course
+  const filteredSemesters = selectedCourse
+    ? semesters.filter(s => s.course_id === selectedCourse)
+    : semesters;
+
+  // For teachers, further filter semesters to only assigned ones
+  const availableSemesters = isTeacher
+    ? filteredSemesters.filter(s => teacherAssignments.some(a => a.semester_id === s.id))
+    : filteredSemesters;
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -261,14 +251,10 @@ export default function AttendancePage() {
       {/* Student View */}
       {isStudent && (
         <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Your Attendance History</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Your Attendance History</CardTitle></CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-              </div>
+              <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
             ) : attendance.length > 0 ? (
               <Table>
                 <TableHeader>
@@ -308,36 +294,38 @@ export default function AttendancePage() {
       {/* Teacher/Admin View */}
       {(isTeacher || isAdmin) && (
         <>
-          {/* Filters */}
           <Card className="mt-6">
             <CardContent className="p-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Course</label>
+                  <Select value={selectedCourse} onValueChange={setSelectedCourse}>
+                    <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
+                    <SelectContent>
+                      {courses.map((course) => (
+                        <SelectItem key={course.id} value={course.id}>{course.name} ({course.code})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div>
                   <label className="text-sm font-medium mb-2 block">Semester</label>
-                  <Select value={selectedSemester} onValueChange={setSelectedSemester}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select semester" />
-                    </SelectTrigger>
+                  <Select value={selectedSemester} onValueChange={setSelectedSemester} disabled={!selectedCourse}>
+                    <SelectTrigger><SelectValue placeholder={!selectedCourse ? 'Select course first' : 'Select semester'} /></SelectTrigger>
                     <SelectContent>
-                      {semesters.map((semester) => (
-                        <SelectItem key={semester.id} value={semester.id}>
-                          {semester.name}
-                        </SelectItem>
+                      {availableSemesters.map((semester) => (
+                        <SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-2 block">Subject</label>
-                  <Select value={selectedSubject} onValueChange={setSelectedSubject}>
-                    <SelectTrigger>
-                      <SelectValue placeholder={subjects.length === 0 ? 'No assigned subjects' : 'Select subject'} />
-                    </SelectTrigger>
+                  <Select value={selectedSubject} onValueChange={setSelectedSubject} disabled={!selectedSemester}>
+                    <SelectTrigger><SelectValue placeholder={subjects.length === 0 ? 'No assigned subjects' : 'Select subject'} /></SelectTrigger>
                     <SelectContent>
                       {subjects.map((subject) => (
-                        <SelectItem key={subject.id} value={subject.id}>
-                          {subject.name}
-                        </SelectItem>
+                        <SelectItem key={subject.id} value={subject.id}>{subject.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -355,23 +343,21 @@ export default function AttendancePage() {
             </CardContent>
           </Card>
 
-          {/* Attendance Table */}
           <Card className="mt-6">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Mark Attendance</CardTitle>
-              <Button onClick={handleSaveAttendance} disabled={isSaving || students.length === 0 || !selectedSubject}>
-                {isSaving ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <Save className="w-4 h-4 mr-2" />
-                )}
+              <Button onClick={handleSaveAttendance} disabled={isSaving || students.length === 0 || !selectedSubject || !selectedSemester || !selectedCourse}>
+                {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                 Save Attendance
               </Button>
             </CardHeader>
             <CardContent>
               {isLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+              ) : !selectedCourse || !selectedSemester ? (
+                <div className="text-center py-8">
+                  <Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">Select a course and semester to begin.</p>
                 </div>
               ) : !selectedSubject ? (
                 <div className="text-center py-8">
