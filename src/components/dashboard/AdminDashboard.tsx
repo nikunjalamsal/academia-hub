@@ -30,11 +30,11 @@ export function AdminDashboard() {
   const fetchStats = async () => {
     try {
       const [students, teachers, courses, assignments, materials, attendance] = await Promise.all([
-        supabase.from('students').select('id', { count: 'exact', head: true }),
-        supabase.from('teachers').select('id', { count: 'exact', head: true }),
-        supabase.from('courses').select('id', { count: 'exact', head: true }),
-        supabase.from('assignments').select('id', { count: 'exact', head: true }),
-        supabase.from('materials').select('id', { count: 'exact', head: true }),
+        supabase.from('students').select('id', { count: 'exact', head: true }).eq('is_active', true),
+        supabase.from('teachers').select('id', { count: 'exact', head: true }).eq('is_active', true),
+        supabase.from('courses').select('id', { count: 'exact', head: true }).eq('is_active', true),
+        supabase.from('assignments').select('id', { count: 'exact', head: true }).eq('is_active', true),
+        supabase.from('materials').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('attendance').select('id', { count: 'exact', head: true }).eq('date', new Date().toISOString().split('T')[0]),
       ]);
 
