@@ -40,7 +40,7 @@ export default function AttendancePage() {
 
           const { data: assignmentsData } = await supabase
             .from('teacher_semester_assignments')
-            .select('semester_id, subject_id, subject_name')
+            .select('semester_id, subject_id, subject_name, subject:subjects(*)')
             .eq('teacher_id', teacherData.id)
             .eq('is_active', true);
 
@@ -121,9 +121,10 @@ export default function AttendancePage() {
       if (studentsData) setStudents(studentsData as Student[]);
 
       if (role === 'teacher') {
-        const assignedSubjectIds = teacherAssignments
-          .filter(a => a.semester_id === selectedSemester && a.subject_id)
-          .map(a => a.subject_id!);
+        // For teachers, show subjects from their assignments for this semester
+        // Use subject_id if available, otherwise match by subject_name
+        const semesterAssignments = teacherAssignments.filter(a => a.semester_id === selectedSemester);
+        const assignedSubjectIds = semesterAssignments.filter(a => a.subject_id).map(a => a.subject_id!);
 
         if (assignedSubjectIds.length > 0) {
           const { data: subjectsData } = await supabase
@@ -135,6 +136,23 @@ export default function AttendancePage() {
           if (subjectsData) {
             setSubjects(subjectsData as Subject[]);
             if (subjectsData.length > 0 && !selectedSubject) setSelectedSubject(subjectsData[0].id);
+          }
+        } else if (semesterAssignments.length > 0) {
+          // Fallback: match by subject_name if subject_id is null
+          const subjectNames = semesterAssignments.map(a => a.subject_name);
+          const { data: subjectsData } = await supabase
+            .from('subjects')
+            .select('*')
+            .eq('semester_id', selectedSemester)
+            .in('name', subjectNames)
+            .eq('is_active', true);
+
+          if (subjectsData && subjectsData.length > 0) {
+            setSubjects(subjectsData as Subject[]);
+            if (!selectedSubject) setSelectedSubject(subjectsData[0].id);
+          } else {
+            setSubjects([]);
+            setSelectedSubject('');
           }
         } else {
           setSubjects([]);

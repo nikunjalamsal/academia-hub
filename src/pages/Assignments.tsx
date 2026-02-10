@@ -36,6 +36,9 @@ export default function Assignments() {
 
   const [formData, setFormData] = useState({ title: '', description: '', semester_id: '', due_date: '', max_marks: 100 });
   const [editFormData, setEditFormData] = useState({ title: '', description: '', semester_id: '', due_date: '', max_marks: 100 });
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [assignmentSubmissions, setAssignmentSubmissions] = useState<any[]>([]);
+  const [viewSubmissionsId, setViewSubmissionsId] = useState<string | null>(null);
 
   useEffect(() => { fetchData(); }, [user, role]);
 
@@ -134,14 +137,26 @@ export default function Assignments() {
     if (!editingAssignment) return;
     setIsUpdating(true);
     try {
-      const { error } = await supabase.from('assignments').update({
+      let fileData = null;
+      if (editFile) {
+        const fileExt = editFile.name.split('.').pop();
+        const fileName = `assignments/${teacher?.id || 'admin'}/${Date.now()}.${fileExt}`;
+        const { error: uploadError } = await supabase.storage.from('academic-files').upload(fileName, editFile);
+        if (uploadError) throw uploadError;
+        const { data: { publicUrl } } = supabase.storage.from('academic-files').getPublicUrl(fileName);
+        fileData = { url: publicUrl, name: editFile.name };
+      }
+      const updateData: any = {
         title: editFormData.title, description: editFormData.description, semester_id: editFormData.semester_id,
         due_date: editFormData.due_date, max_marks: editFormData.max_marks,
-      }).eq('id', editingAssignment.id);
+      };
+      if (fileData) { updateData.file_url = fileData.url; updateData.file_name = fileData.name; }
+      const { error } = await supabase.from('assignments').update(updateData).eq('id', editingAssignment.id);
       if (error) throw error;
       toast({ title: 'Assignment Updated', description: 'The assignment has been updated successfully.' });
       setIsEditDialogOpen(false);
       setEditingAssignment(null);
+      setEditFile(null);
       fetchData();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -158,6 +173,20 @@ export default function Assignments() {
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     } finally { setDeleteAssignmentId(null); }
+  };
+
+  const handleViewSubmissions = async (assignmentId: string) => {
+    setViewSubmissionsId(assignmentId);
+    try {
+      const { data } = await supabase
+        .from('assignment_submissions')
+        .select('*, student:students(*, profile:profiles(*))')
+        .eq('assignment_id', assignmentId)
+        .order('submitted_at', { ascending: false });
+      setAssignmentSubmissions(data || []);
+    } catch (error) {
+      console.error('Error fetching submissions:', error);
+    }
   };
 
   const handleSubmitAssignment = async (assignmentId: string, file: File) => {
@@ -258,11 +287,47 @@ export default function Assignments() {
               <div className="space-y-2"><Label htmlFor="edit_due_date">Due Date *</Label><Input id="edit_due_date" type="datetime-local" value={editFormData.due_date} onChange={(e) => setEditFormData({ ...editFormData, due_date: e.target.value })} required /></div>
               <div className="space-y-2"><Label htmlFor="edit_max_marks">Max Marks</Label><Input id="edit_max_marks" type="number" value={editFormData.max_marks} onChange={(e) => setEditFormData({ ...editFormData, max_marks: parseInt(e.target.value) })} /></div>
             </div>
+            {editingAssignment?.file_url && !editFile && (
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
+                <FileText className="w-4 h-4" />
+                Current: {editingAssignment.file_name || 'Attachment'}
+              </div>
+            )}
+            <div className="space-y-2"><Label htmlFor="edit_file">Replace Attachment</Label><Input id="edit_file" type="file" onChange={(e) => setEditFile(e.target.files?.[0] || null)} /></div>
             <div className="flex justify-end gap-3">
-              <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => { setIsEditDialogOpen(false); setEditFile(null); }}>Cancel</Button>
               <Button type="submit" disabled={isUpdating}>{isUpdating ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</> : 'Update'}</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Submissions Dialog */}
+      <Dialog open={!!viewSubmissionsId} onOpenChange={(open) => { if (!open) setViewSubmissionsId(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>Student Submissions</DialogTitle></DialogHeader>
+          {assignmentSubmissions.length > 0 ? (
+            <div className="space-y-3 mt-4 max-h-96 overflow-y-auto">
+              {assignmentSubmissions.map((sub) => (
+                <div key={sub.id} className="p-4 rounded-lg bg-muted/50 flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">{(sub.student as any)?.profile?.full_name || 'Student'}</p>
+                    <p className="text-sm text-muted-foreground">Roll: {(sub.student as any)?.roll_number} • Submitted: {format(new Date(sub.submitted_at), 'MMM d, yyyy h:mm a')}</p>
+                    {sub.marks_obtained !== null && <p className="text-sm text-success">Marks: {sub.marks_obtained}</p>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {sub.file_url && (
+                      <a href={sub.file_url} target="_blank" rel="noopener noreferrer">
+                        <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-1" />Download</Button>
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-center py-8">No submissions yet</p>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -297,6 +362,7 @@ export default function Assignments() {
                       {canEdit && (
                         <>
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEditAssignment(assignment)}><Edit className="w-4 h-4" /></Button>
+                          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => handleViewSubmissions(assignment.id)}>Submissions</Button>
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeleteAssignmentId(assignment.id)}><Trash2 className="w-4 h-4" /></Button>
                         </>
                       )}
