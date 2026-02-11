@@ -16,7 +16,7 @@ import { GraduationCap, Plus, Search, Loader2, Edit, Users, Trash2, Upload } fro
 import { Student, Semester, Course } from '@/types/database';
 
 export default function Students() {
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const { toast } = useToast();
   const [students, setStudents] = useState<Student[]>([]);
   const [semesters, setSemesters] = useState<Semester[]>([]);
@@ -50,6 +50,21 @@ export default function Students() {
 
   const fetchData = async () => {
     try {
+      if (role === 'student') {
+        // Students see their peers in the same semester
+        const { data: selfData } = await supabase.from('students').select('current_semester_id').eq('user_id', user?.id).maybeSingle();
+        if (selfData?.current_semester_id) {
+          const { data: peersData } = await supabase
+            .from('students')
+            .select('*, profile:profiles(*), course:courses(*), current_semester:semesters(*)')
+            .eq('current_semester_id', selfData.current_semester_id)
+            .eq('is_active', true)
+            .order('roll_number');
+          if (peersData) setStudents(peersData as Student[]);
+        }
+        setIsLoading(false);
+        return;
+      }
       const [studentsRes, semestersRes, coursesRes] = await Promise.all([
         supabase.from('students').select('*, profile:profiles(*), course:courses(*), current_semester:semesters(*)').eq('is_active', true).order('created_at', { ascending: false }),
         supabase.from('semesters').select('*, course:courses(*)').order('semester_number'),
