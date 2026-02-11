@@ -309,18 +309,49 @@ export default function Assignments() {
           {assignmentSubmissions.length > 0 ? (
             <div className="space-y-3 mt-4 max-h-96 overflow-y-auto">
               {assignmentSubmissions.map((sub) => (
-                <div key={sub.id} className="p-4 rounded-lg bg-muted/50 flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">{(sub.student as any)?.profile?.full_name || 'Student'}</p>
-                    <p className="text-sm text-muted-foreground">Roll: {(sub.student as any)?.roll_number} • Submitted: {format(new Date(sub.submitted_at), 'MMM d, yyyy h:mm a')}</p>
-                    {sub.marks_obtained !== null && <p className="text-sm text-success">Marks: {sub.marks_obtained}</p>}
+                <div key={sub.id} className="p-4 rounded-lg bg-muted/50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{(sub.student as any)?.profile?.full_name || 'Student'}</p>
+                      <p className="text-sm text-muted-foreground">Roll: {(sub.student as any)?.roll_number} • Submitted: {format(new Date(sub.submitted_at), 'MMM d, yyyy h:mm a')}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {sub.file_url && (
+                        <a href={sub.file_url} target="_blank" rel="noopener noreferrer">
+                          <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-1" />Download</Button>
+                        </a>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {sub.file_url && (
-                      <a href={sub.file_url} target="_blank" rel="noopener noreferrer">
-                        <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-1" />Download</Button>
-                      </a>
-                    )}
+                  <div className="flex items-center gap-2 pt-2 border-t">
+                    <Label className="text-sm whitespace-nowrap">Marks:</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={assignments.find(a => a.id === viewSubmissionsId)?.max_marks || 100}
+                      placeholder="Enter marks"
+                      defaultValue={sub.marks_obtained ?? ''}
+                      className="w-24 h-8 text-sm"
+                      onBlur={async (e) => {
+                        const marks = e.target.value ? parseInt(e.target.value) : null;
+                        try {
+                          const { error } = await supabase.from('assignment_submissions').update({
+                            marks_obtained: marks,
+                            graded_at: marks !== null ? new Date().toISOString() : null,
+                            graded_by: teacher?.id || null,
+                          }).eq('id', sub.id);
+                          if (error) throw error;
+                          toast({ title: 'Marks Updated', description: `Marks saved for ${(sub.student as any)?.profile?.full_name}` });
+                          // Update local state
+                          setAssignmentSubmissions(prev => prev.map(s => s.id === sub.id ? { ...s, marks_obtained: marks } : s));
+                        } catch (err: any) {
+                          toast({ variant: 'destructive', title: 'Error', description: err.message });
+                        }
+                      }}
+                    />
+                    <span className="text-sm text-muted-foreground">/ {assignments.find(a => a.id === viewSubmissionsId)?.max_marks || 100}</span>
+                    {sub.marks_obtained !== null && <span className="text-xs text-success font-medium ml-2">Graded</span>}
+                    {sub.feedback && <span className="text-xs text-muted-foreground ml-1">• Has feedback</span>}
                   </div>
                 </div>
               ))}

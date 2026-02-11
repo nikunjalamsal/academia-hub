@@ -37,6 +37,7 @@ export default function Teachers() {
   });
   const [selectedSemesters, setSelectedSemesters] = useState<{ semester_id: string; subject_name: string; subject_id?: string }[]>([]);
 
+
   const [editFormData, setEditFormData] = useState({
     full_name: '', phone: '', employee_id: '', department: '', designation: '', qualification: '',
   });
@@ -180,7 +181,7 @@ export default function Teachers() {
   };
 
   const toggleSemester = (semesterId: string) => {
-    const exists = selectedSemesters.find(s => s.semester_id === semesterId);
+    const exists = selectedSemesters.some(s => s.semester_id === semesterId);
     if (exists) {
       setSelectedSemesters(selectedSemesters.filter(s => s.semester_id !== semesterId));
     } else {
@@ -188,10 +189,23 @@ export default function Teachers() {
     }
   };
 
-  const updateSubjectSelection = (semesterId: string, subjectId: string, subjectName: string) => {
-    setSelectedSemesters(selectedSemesters.map(s =>
-      s.semester_id === semesterId ? { ...s, subject_id: subjectId, subject_name: subjectName } : s
-    ));
+  const isSemesterSelected = (semesterId: string) => selectedSemesters.some(s => s.semester_id === semesterId);
+
+  const toggleSubjectForSemester = (semesterId: string, subjectId: string, subjectName: string) => {
+    const exists = selectedSemesters.find(s => s.semester_id === semesterId && s.subject_id === subjectId);
+    if (exists) {
+      const filtered = selectedSemesters.filter(s => !(s.semester_id === semesterId && s.subject_id === subjectId));
+      // Keep at least one entry for the semester (empty) if all subjects removed
+      if (!filtered.some(s => s.semester_id === semesterId)) {
+        setSelectedSemesters([...filtered, { semester_id: semesterId, subject_name: '', subject_id: '' }]);
+      } else {
+        setSelectedSemesters(filtered);
+      }
+    } else {
+      // Remove empty placeholder for this semester if exists, then add the subject
+      const cleaned = selectedSemesters.filter(s => !(s.semester_id === semesterId && !s.subject_id));
+      setSelectedSemesters([...cleaned, { semester_id: semesterId, subject_name: subjectName, subject_id: subjectId }]);
+    }
   };
 
   const filteredSemesters = selectedCourse ? semesters.filter(s => s.course_id === selectedCourse) : semesters;
@@ -248,26 +262,27 @@ export default function Teachers() {
                     <div className="border rounded-lg p-4 max-h-64 overflow-y-auto space-y-3">
                       <p className="text-sm text-muted-foreground mb-2">Select semesters and subjects to assign:</p>
                       {filteredSemesters.map((semester) => {
-                        const isSelected = selectedSemesters.find(s => s.semester_id === semester.id);
+                        const semSelected = isSemesterSelected(semester.id);
                         const semesterSubjects = getSubjectsForSemester(semester.id);
+                        const selectedSubjectIds = selectedSemesters.filter(s => s.semester_id === semester.id && s.subject_id).map(s => s.subject_id);
                         return (
                           <div key={semester.id} className="space-y-2 p-3 bg-muted/50 rounded-lg">
                             <div className="flex items-center gap-3">
-                              <Checkbox checked={!!isSelected} onCheckedChange={() => toggleSemester(semester.id)} />
+                              <Checkbox checked={semSelected} onCheckedChange={() => toggleSemester(semester.id)} />
                               <span className="text-sm font-medium">{semester.name}</span>
                             </div>
-                            {isSelected && (
-                              <div className="ml-7">
+                            {semSelected && (
+                              <div className="ml-7 space-y-1">
                                 {semesterSubjects.length > 0 ? (
-                                  <Select value={isSelected.subject_id || ''} onValueChange={(value) => {
-                                    const subject = semesterSubjects.find(s => s.id === value);
-                                    updateSubjectSelection(semester.id, value, subject?.name || '');
-                                  }}>
-                                    <SelectTrigger className="w-full"><SelectValue placeholder="Select subject" /></SelectTrigger>
-                                    <SelectContent>
-                                      {semesterSubjects.map((subject) => (<SelectItem key={subject.id} value={subject.id}>{subject.name} ({subject.code})</SelectItem>))}
-                                    </SelectContent>
-                                  </Select>
+                                  semesterSubjects.map((subject) => (
+                                    <div key={subject.id} className="flex items-center gap-2">
+                                      <Checkbox
+                                        checked={selectedSubjectIds.includes(subject.id)}
+                                        onCheckedChange={() => toggleSubjectForSemester(semester.id, subject.id, subject.name)}
+                                      />
+                                      <span className="text-sm">{subject.name} ({subject.code})</span>
+                                    </div>
+                                  ))
                                 ) : (
                                   <p className="text-sm text-muted-foreground italic">No subjects defined for this semester. Please add subjects in Courses first.</p>
                                 )}
