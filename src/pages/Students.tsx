@@ -29,6 +29,7 @@ export default function Students() {
   const [isCreating, setIsCreating] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isBatchUpdating, setIsBatchUpdating] = useState(false);
+  const [selectedCourse, setSelectedCourse] = useState<string>('all');
   const [selectedSemester, setSelectedSemester] = useState<string>('all');
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
@@ -215,12 +216,15 @@ export default function Students() {
     if (selectedStudents.length === filteredStudents.length) { setSelectedStudents([]); } else { setSelectedStudents(filteredStudents.map(s => s.id)); }
   };
 
+  const filteredSemesters = selectedCourse === 'all' ? semesters : semesters.filter(s => s.course_id === selectedCourse);
+
   const filteredStudents = students.filter(student => {
     const matchesSearch = (student.profile as any)?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       student.roll_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (student.profile as any)?.email?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCourse = selectedCourse === 'all' || student.course_id === selectedCourse;
     const matchesSemester = selectedSemester === 'all' || student.current_semester_id === selectedSemester;
-    return matchesSearch && matchesSemester;
+    return matchesSearch && matchesCourse && matchesSemester;
   });
 
   const batchFilteredSemesters = batchCourseId ? semesters.filter(s => s.course_id === batchCourseId) : semesters;
@@ -398,11 +402,18 @@ export default function Students() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input placeholder="Search by name, roll number, or email..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9" />
             </div>
+            <Select value={selectedCourse} onValueChange={(value) => { setSelectedCourse(value); setSelectedSemester('all'); }}>
+              <SelectTrigger className="w-full sm:w-48"><SelectValue placeholder="Filter by course" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Courses</SelectItem>
+                {courses.map((course) => (<SelectItem key={course.id} value={course.id}>{course.name} ({course.code})</SelectItem>))}
+              </SelectContent>
+            </Select>
             <Select value={selectedSemester} onValueChange={setSelectedSemester}>
               <SelectTrigger className="w-full sm:w-48"><SelectValue placeholder="Filter by semester" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Semesters</SelectItem>
-                {semesters.map((semester) => (<SelectItem key={semester.id} value={semester.id}>{semester.name}</SelectItem>))}
+                {filteredSemesters.map((semester) => (<SelectItem key={semester.id} value={semester.id}>{semester.name} {(semester as any).course ? `(${((semester as any).course as any).code})` : ''}</SelectItem>))}
               </SelectContent>
             </Select>
           </div>
