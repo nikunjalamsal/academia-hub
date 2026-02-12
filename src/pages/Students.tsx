@@ -52,12 +52,18 @@ export default function Students() {
     try {
       if (role === 'student') {
         // Students see their peers in the same semester
-        const { data: selfData } = await supabase.from('students').select('current_semester_id').eq('user_id', user?.id).maybeSingle();
-        if (selfData?.current_semester_id) {
+        const [selfRes, semestersRes, coursesRes] = await Promise.all([
+          supabase.from('students').select('current_semester_id').eq('user_id', user?.id).maybeSingle(),
+          supabase.from('semesters').select('*, course:courses(*)').order('semester_number'),
+          supabase.from('courses').select('*').eq('is_active', true),
+        ]);
+        if (semestersRes.data) setSemesters(semestersRes.data as Semester[]);
+        if (coursesRes.data) setCourses(coursesRes.data as Course[]);
+        if (selfRes.data?.current_semester_id) {
           const { data: peersData } = await supabase
             .from('students')
             .select('*, profile:profiles(*), course:courses(*), current_semester:semesters(*)')
-            .eq('current_semester_id', selfData.current_semester_id)
+            .eq('current_semester_id', selfRes.data.current_semester_id)
             .eq('is_active', true)
             .order('roll_number');
           if (peersData) setStudents(peersData as Student[]);
@@ -219,6 +225,8 @@ export default function Students() {
 
   const batchFilteredSemesters = batchCourseId ? semesters.filter(s => s.course_id === batchCourseId) : semesters;
   const isAdmin = role === 'admin';
+  const isTeacher = role === 'teacher';
+  const canManage = isAdmin;
 
   return (
     <div className="page-container">
@@ -410,7 +418,7 @@ export default function Students() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {isAdmin && (
+                  {canManage && (
                     <TableHead className="w-12">
                       <Checkbox checked={selectedStudents.length === filteredStudents.length && filteredStudents.length > 0} onCheckedChange={toggleAllStudents} />
                     </TableHead>
@@ -421,13 +429,13 @@ export default function Students() {
                   <TableHead>Email</TableHead>
                   <TableHead>Course</TableHead>
                   <TableHead>Semester</TableHead>
-                  {isAdmin && <TableHead className="w-24">Actions</TableHead>}
+                  {canManage && <TableHead className="w-24">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredStudents.map((student) => (
                   <TableRow key={student.id} className="table-row-hover">
-                    {isAdmin && (
+                    {canManage && (
                       <TableCell>
                         <Checkbox checked={selectedStudents.includes(student.id)} onCheckedChange={() => toggleStudentSelection(student.id)} />
                       </TableCell>
@@ -443,7 +451,7 @@ export default function Students() {
                     <TableCell className="text-muted-foreground">{(student.profile as any)?.email}</TableCell>
                     <TableCell>{(student.course as any)?.code}</TableCell>
                     <TableCell>{(student.current_semester as any)?.name}</TableCell>
-                    {isAdmin && (
+                    {canManage && (
                       <TableCell>
                         <div className="flex gap-1">
                           <Button variant="ghost" size="icon" onClick={() => handleEditStudent(student)}><Edit className="w-4 h-4" /></Button>

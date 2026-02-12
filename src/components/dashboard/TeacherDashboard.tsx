@@ -59,7 +59,9 @@ export function TeacherDashboard() {
           const semesterIds = assignmentData.map(a => a.semester_id);
           
           const [studentsRes, assignmentsRes, materialsRes, attendanceRes] = await Promise.all([
-            supabase.from('students').select('id', { count: 'exact', head: true }).in('current_semester_id', semesterIds).eq('is_active', true),
+            semesterIds.length > 0
+              ? supabase.from('students').select('id', { count: 'exact', head: true }).in('current_semester_id', semesterIds).eq('is_active', true)
+              : Promise.resolve({ count: 0 }),
             supabase.from('assignments').select('id', { count: 'exact', head: true }).eq('teacher_id', teacherData.id).eq('is_active', true),
             supabase.from('materials').select('id', { count: 'exact', head: true }).eq('teacher_id', teacherData.id).eq('is_active', true),
             supabase.from('attendance').select('id', { count: 'exact', head: true })

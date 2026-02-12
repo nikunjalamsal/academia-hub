@@ -35,7 +35,7 @@ const navItems: NavItem[] = [
     title: 'Students',
     href: '/students',
     icon: GraduationCap,
-    roles: ['admin', 'teacher'],
+    roles: ['admin', 'teacher', 'student'],
   },
   {
     title: 'Teachers',
